@@ -66,6 +66,7 @@ COPY config/ ./config/
 COPY prisma/ ./prisma/
 COPY palet8_agents/ ./palet8_agents/
 COPY migrations/ ./migrations/
+COPY prompts/ ./prompts/
 
 # Prisma client already generated in builder stage and copied via /root/.local
 # No need to regenerate here - this speeds up the build
