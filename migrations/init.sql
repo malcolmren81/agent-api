@@ -415,6 +415,128 @@ BEGIN
 END $$;
 
 -- ============================================================================
+-- PHASE 2: Vector Database Tables (pgvector for RAG)
+-- ============================================================================
+
+-- Enable pgvector extension
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Art Library Table (1408-dim image embeddings)
+CREATE TABLE IF NOT EXISTS art_library (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    category VARCHAR(100),
+    tags TEXT[],
+    image_url TEXT,
+    thumbnail_url TEXT,
+    embedding vector(1408),
+    metadata JSONB,
+    source VARCHAR(100),
+    license VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Art Library indexes
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'art_library_embedding_idx') THEN
+        CREATE INDEX art_library_embedding_idx ON art_library USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'art_library_category_idx') THEN
+        CREATE INDEX art_library_category_idx ON art_library(category);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'art_library_tags_idx') THEN
+        CREATE INDEX art_library_tags_idx ON art_library USING gin(tags);
+    END IF;
+END $$;
+
+-- Prompt Embeddings Table (768-dim text embeddings)
+CREATE TABLE IF NOT EXISTS prompt_embeddings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id VARCHAR(255),
+    user_id VARCHAR(255),
+    prompt TEXT NOT NULL,
+    negative_prompt TEXT,
+    style_tags TEXT[],
+    product_type VARCHAR(100),
+    style VARCHAR(100),
+    evaluation_score FLOAT,
+    embedding vector(768),
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Prompt Embeddings indexes
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'prompt_embedding_idx') THEN
+        CREATE INDEX prompt_embedding_idx ON prompt_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'prompt_user_idx') THEN
+        CREATE INDEX prompt_user_idx ON prompt_embeddings(user_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'prompt_product_type_idx') THEN
+        CREATE INDEX prompt_product_type_idx ON prompt_embeddings(product_type);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'prompt_score_idx') THEN
+        CREATE INDEX prompt_score_idx ON prompt_embeddings(evaluation_score);
+    END IF;
+END $$;
+
+-- Design Summaries Table (768-dim text embeddings for user history)
+CREATE TABLE IF NOT EXISTS design_summaries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id VARCHAR(255) NOT NULL,
+    user_id VARCHAR(255) NOT NULL,
+    summary TEXT NOT NULL,
+    title VARCHAR(255),
+    product_type VARCHAR(100),
+    style VARCHAR(100),
+    tags TEXT[],
+    final_prompt TEXT,
+    image_url TEXT,
+    thumbnail_url TEXT,
+    embedding vector(768),
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Design Summaries indexes
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'design_summary_embedding_idx') THEN
+        CREATE INDEX design_summary_embedding_idx ON design_summaries USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'design_summary_user_idx') THEN
+        CREATE INDEX design_summary_user_idx ON design_summaries(user_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'design_summary_job_idx') THEN
+        CREATE INDEX design_summary_job_idx ON design_summaries(job_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'design_summary_product_type_idx') THEN
+        CREATE INDEX design_summary_product_type_idx ON design_summaries(product_type);
+    END IF;
+END $$;
+
+-- Helper function for updated_at trigger
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Trigger for art_library updated_at
+DROP TRIGGER IF EXISTS update_art_library_updated_at ON art_library;
+CREATE TRIGGER update_art_library_updated_at
+    BEFORE UPDATE ON art_library
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================================
 -- VERIFICATION: Check migration results
 -- ============================================================================
 
@@ -424,16 +546,26 @@ DECLARE
     conv_count INT;
     msg_count INT;
     design_count INT;
+    art_count INT;
+    prompt_emb_count INT;
+    design_sum_count INT;
 BEGIN
     SELECT COUNT(*) INTO job_count FROM "Job";
     SELECT COUNT(*) INTO conv_count FROM "Conversation";
     SELECT COUNT(*) INTO msg_count FROM "ChatMessage";
     SELECT COUNT(*) INTO design_count FROM "Design";
+    SELECT COUNT(*) INTO art_count FROM art_library;
+    SELECT COUNT(*) INTO prompt_emb_count FROM prompt_embeddings;
+    SELECT COUNT(*) INTO design_sum_count FROM design_summaries;
 
     RAISE NOTICE '=== Agents API Migration Complete ===';
     RAISE NOTICE 'Job: % records', job_count;
     RAISE NOTICE 'Conversation: % records', conv_count;
     RAISE NOTICE 'ChatMessage: % records', msg_count;
     RAISE NOTICE 'Design: % records', design_count;
+    RAISE NOTICE '--- Vector Tables ---';
+    RAISE NOTICE 'art_library: % records', art_count;
+    RAISE NOTICE 'prompt_embeddings: % records', prompt_emb_count;
+    RAISE NOTICE 'design_summaries: % records', design_sum_count;
     RAISE NOTICE '=====================================';
 END $$;
