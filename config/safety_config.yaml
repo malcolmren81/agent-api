@@ -1,0 +1,216 @@
+# =============================================================================
+# Safety Configuration - Aligned Dec 2025
+# =============================================================================
+# Core Rules:
+# 1. NSFW = absolute block (POLICY_FAIL), no exceptions
+# 2. IP never blocks - tag and make private only
+# 3. Violence/hate/illegal - only block extreme cases
+# =============================================================================
+
+version: "1.0"
+
+# =============================================================================
+# Blocking Behavior by Category
+# =============================================================================
+# "block" = POLICY_FAIL (no generation/preview)
+# "tag" = Allow but tag for analytics/privacy control
+# =============================================================================
+blocking_behavior:
+  nsfw: "block"             # Always POLICY_FAIL, no exceptions
+  violence: "tag"           # Tag only, block only extreme cases
+  hate: "tag"               # Tag only, block only extreme cases
+  ip_trademark: "tag"       # Never block, tag for privacy control
+  illegal: "tag"            # Tag only, block only extreme cases
+
+# =============================================================================
+# Tagging Thresholds
+# =============================================================================
+# Score thresholds for flagging content (not blocking, except NSFW)
+# =============================================================================
+tagging_thresholds:
+  nsfw: 0.5                 # Any moderate NSFW = block immediately
+  violence: 0.7             # Tag at 70%+ confidence
+  hate: 0.7                 # Tag at 70%+ confidence
+  ip_trademark: 0.5         # Lower threshold - detect IP early
+  illegal: 0.8              # Tag at 80%+ confidence
+
+# =============================================================================
+# NSFW - Hard Block (No Exceptions)
+# =============================================================================
+nsfw:
+  behavior: "absolute_block"
+  applies_to:
+    - "prompt"              # Block before generation
+    - "image"               # Block after generation (don't show)
+
+  # Keywords that trigger immediate block
+  critical_keywords:
+    - "nude"
+    - "naked"
+    - "xxx"
+    - "porn"
+    - "pornograph"
+    - "nsfw"
+    - "sexual"
+    - "erotic"
+    - "hentai"
+
+# =============================================================================
+# Extreme Cases - Still Block (Non-NSFW)
+# =============================================================================
+# These are the ONLY non-NSFW cases that cause POLICY_FAIL
+# =============================================================================
+extreme_block_keywords:
+  violence:
+    - "child abuse"
+    - "terror attack"
+    - "mass shooting"
+    - "torture of children"
+
+  hate:
+    - "nazi propaganda"
+    - "genocide"
+    - "ethnic cleansing"
+    - "white supremacy"
+
+  illegal:
+    - "child exploitation"
+    - "human trafficking"
+    - "csam"
+
+# =============================================================================
+# IP / Trademark Detection
+# =============================================================================
+# Core Rule: IP NEVER blocks
+# Behavior: Tag and apply visibility control (user-private only)
+# =============================================================================
+ip_detection:
+  enabled: true
+  blocks: false             # Never blocks, just tags
+
+  # Visibility control for IP-flagged images
+  visibility_control:
+    mode: "user_private"    # Only visible to user (and their org)
+    exclude_from:
+      - "public_gallery"
+      - "recommendations"
+      - "trending"
+      - "shared_collections"
+
+  # Known entities to detect
+  known_entities:
+    entertainment:
+      - "disney"
+      - "marvel"
+      - "dc comics"
+      - "pixar"
+      - "dreamworks"
+      - "nintendo"
+      - "pokemon"
+      - "studio ghibli"
+      - "warner bros"
+      - "universal"
+      - "paramount"
+
+    sports:
+      - "nfl"
+      - "nba"
+      - "mlb"
+      - "nhl"
+      - "fifa"
+      - "olympics"
+      - "olympic rings"
+      - "world cup"
+
+    sports_brands:
+      - "nike"
+      - "adidas"
+      - "puma"
+      - "under armour"
+      - "reebok"
+      - "new balance"
+
+    fashion:
+      - "supreme"
+      - "gucci"
+      - "louis vuitton"
+      - "chanel"
+      - "hermes"
+      - "prada"
+      - "versace"
+      - "balenciaga"
+
+    tech:
+      - "apple"
+      - "google"
+      - "microsoft"
+      - "meta"
+      - "amazon"
+      - "tesla"
+      - "openai"
+
+    characters:
+      - "mickey mouse"
+      - "minnie mouse"
+      - "batman"
+      - "superman"
+      - "spider-man"
+      - "iron man"
+      - "captain america"
+      - "pikachu"
+      - "mario"
+      - "luigi"
+      - "sonic"
+      - "hello kitty"
+      - "snoopy"
+      - "winnie the pooh"
+
+# =============================================================================
+# Severity Levels
+# =============================================================================
+severity_levels:
+  none:
+    score_range: [0.0, 0.3]
+    action: "continue"
+
+  low:
+    score_range: [0.3, 0.5]
+    action: "tag"
+
+  medium:
+    score_range: [0.5, 0.7]
+    action: "tag"
+
+  high:
+    score_range: [0.7, 0.9]
+    action: "tag_and_review"   # Flag for internal review
+
+  critical:
+    score_range: [0.9, 1.0]
+    action: "block"            # Only for NSFW or extreme cases
+
+# =============================================================================
+# User Messages (when blocked)
+# =============================================================================
+user_messages:
+  nsfw: "Your request contains adult content that we cannot generate."
+  extreme_violence: "Your request contains content that violates our safety policy."
+  extreme_hate: "Your request contains content that violates our community guidelines."
+  extreme_illegal: "Your request contains content that violates our terms of service."
+
+# =============================================================================
+# Alternatives (suggestions when blocked)
+# =============================================================================
+alternatives:
+  nsfw:
+    - "Try describing the scene without explicit content"
+    - "Focus on artistic or stylized representations"
+
+  ip_trademark:
+    - "Try describing original characters or generic designs instead"
+    - "Use descriptive terms rather than brand names"
+    - "Create an original character inspired by the style"
+
+  general:
+    - "Try rephrasing your request with different terms"
+    - "Focus on general concepts rather than specific restricted content"

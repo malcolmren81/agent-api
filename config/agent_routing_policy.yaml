@@ -1,0 +1,231 @@
+version: "2.0"
+
+# ============================================================================
+# Palet8 Agent System Configuration
+# Phase 1: Structure & Foundation
+# ============================================================================
+
+# ============================================================================
+# NEW: Model Profiles for Restructured Agent System (Phase 2 TBD items)
+# ============================================================================
+
+# Model profiles per agent - Aligned Dec 2025
+model_profiles:
+  pali:
+    # User-facing conversational agent - fast, friendly responses
+    primary_model: "x-ai/grok-4-fast"
+    fallback_model: "google/gemini-2.5-flash-preview-09-25"
+    temperature: 0.7
+    max_tokens: 1000
+    cost_per_1k_input: 0.0002    # $0.20/1M
+    cost_per_1k_output: 0.0005   # $0.50/1M
+
+  planner:
+    # Reasoning agent with thinking capability - prompt construction
+    primary_model: "anthropic/claude-haiku-4.5"
+    fallback_model: "moonshotai/kimi-k2-thinking"
+    temperature: 0.3
+    max_tokens: 2000
+    cost_per_1k_input: 0.001     # $1.00/1M
+    cost_per_1k_output: 0.005    # $5.00/1M
+
+  evaluator:
+    # Vision + reasoning - evaluates images and prompts
+    primary_model: "alibaba/qwen3-vl-30b-a3b-instruct"
+    fallback_model: "openai/gpt-4o-mini"
+    temperature: 0.2
+    max_tokens: 800
+    cost_per_1k_input: 0.00015   # $0.15/1M
+    cost_per_1k_output: 0.0006   # $0.60/1M
+
+  safety:
+    # Vision-capable safety monitor - deterministic
+    primary_model: "alibaba/qwen3-vl-30b-a3b-instruct"
+    fallback_model: "openai/gpt-4o-mini"
+    temperature: 0.0
+    max_tokens: 500
+    cost_per_1k_input: 0.00015   # $0.15/1M
+    cost_per_1k_output: 0.0006   # $0.60/1M
+
+  composer:
+    # Prompt composition - creative writing for image generation prompts
+    primary_model: "anthropic/claude-sonnet-4.5"
+    fallback_model: "anthropic/claude-haiku-4.5"
+    temperature: 0.4
+    max_tokens: 1000
+    cost_per_1k_input: 0.003     # $3.00/1M
+    cost_per_1k_output: 0.015    # $15.00/1M
+
+  search:
+    # Web search - online information retrieval
+    primary_model: "openai/gpt-4o-mini-search-preview"
+    fallback_model: "tavily"     # Falls back to Tavily API
+    temperature: 0.0
+    max_tokens: 2000
+    cost_per_1k_input: 0.00015   # $0.15/1M
+    cost_per_1k_output: 0.0006   # $0.60/1M
+
+# =============================================================================
+# Image Generation Models - See separate config file
+# =============================================================================
+# - config/image_models_config.yaml - Model registry, scenario selection, costs
+# =============================================================================
+image_models:
+  config_file: "config/image_models_config.yaml"
+  default_dimensions: "1024x1024"
+  default_steps: 30
+  min_resolution: 512
+
+# Embedding models - Aligned Dec 2025
+# Using Google Vertex AI for both text and image embeddings
+embedding_models:
+  text:
+    provider: "google"
+    model: "gemini-embedding-001"
+    dimensions: 768
+    max_tokens: 2048
+    cost_per_1m_tokens: 0.00025  # $0.00025/1K chars
+    use_case: "Prompts, summaries, user history"
+  image:
+    provider: "google"
+    model: "multimodalembedding@001"
+    dimensions: 1408
+    max_file_size: "20MB"
+    formats: ["PNG", "JPG", "GIF", "BMP"]
+    use_case: "Art library, generated images, visual similarity"
+
+# =============================================================================
+# Safety & Evaluation - See separate config files
+# =============================================================================
+# - config/safety_config.yaml - Safety rules, NSFW blocking, IP detection
+# - config/evaluation_config.yaml - Quality scoring, mode thresholds
+# =============================================================================
+
+# RAG configuration
+rag:
+  retrieval_limit: 10
+  similarity_threshold: 0.7
+
+# General settings
+general:
+  max_conversation_turns: 20
+  max_generation_retries: 3
+
+# ============================================================================
+# LEGACY: Original configuration (kept for backward compatibility)
+# ============================================================================
+
+# Global configuration for all agents
+global:
+  soft_cost_budget_credits: 8
+  hard_cost_budget_credits: 20
+  max_regenerations: 1
+  feature_flags:
+    planner_llm_enabled: true
+    prompt_mgr_llm_enabled: true
+    model_selector_bandit_enabled: true
+    evaluation_vision_enabled: true
+
+# Planner Agent Configuration
+planner:
+  mode: "hybrid"  # Options: rule | llm | hybrid
+  rule_conditions:
+    min_word_count: 8
+    max_objects: 1
+    novelty_threshold: 0.35
+  llm_triggers:
+    - ambiguous_prompt
+    - multi_object
+    - composition_operators
+    - out_of_catalog
+  llm_config:
+    temperature: 0.3
+    max_tokens: 500
+
+# Prompt Manager Agent Configuration
+prompt_manager:
+  mode: "hybrid"  # Options: database | llm | hybrid
+  primary: "database"
+  template_confidence_threshold: 0.80
+  llm_fallback_triggers:
+    - no_template_match
+    - confidence_below_threshold
+    - creative_scene_request
+    - multi_object_composition
+  llm_config:
+    temperature: 0.4
+    max_tokens: 300
+
+# Model Selection Agent Configuration
+model_selection:
+  strategy: "ucb1"  # Options: priority | ucb1 | epsilon_greedy
+  exploration:
+    min_trials_per_model: 1
+    decay_type: "ema"
+    decay_alpha: 0.031  # ~21 day half-life
+    epsilon: 0.05  # For epsilon_greedy fallback
+  reward_weights:
+    overall_score: 0.60
+    accept_flag: 0.30
+    cost_efficiency: 0.05
+    latency_efficiency: 0.05
+  buckets:
+    - "product:realistic:white-bg"
+    - "product:realistic:lifestyle"
+    - "product:artistic:lifestyle"
+    - "creative:artistic:abstract"
+    - "creative:realistic:scene"
+  llm_tiebreak:
+    enabled: true
+    ucb_diff_threshold: 0.05  # Trigger LLM if top 2 within this range
+
+# Evaluation Agent Configuration
+evaluation:
+  mode: "vision"  # Options: rule | llm | hybrid | vision - CHANGED: Force vision eval always
+  objective_checks:
+    min_resolution: [1024, 1024]
+    min_coverage: 0.50  # Lowered from 0.70 to be more permissive
+    background_whiteness: 0.80  # Lowered from 0.92 to be more permissive
+    safety_required: true
+  subjective_llm:
+    min_aesthetics: 0.50  # Lowered from 0.65
+    min_suitability: 0.50  # Lowered from 0.70
+    vision_model: "gemini-2.0-flash"  # Options: gemini-2.0-flash | gpt-4-vision
+    temperature: 0.2
+    max_tokens: 200
+  combined_weights:
+    coverage: 0.35
+    aesthetics: 0.40
+    suitability: 0.25
+  acceptance_threshold: 0.45  # Lowered from 0.50 to allow more images to pass
+
+# Regeneration Policy
+regeneration:
+  prompt_tweak_triggers:
+    - low_coverage
+    - background_fail
+    - composition_wording
+  model_switch_triggers:
+    - resolution_artifacts
+    - color_banding
+    - repeated_failure
+  prompt_tweaks:
+    enhance_studio_lighting: true
+    enforce_centered_composition: true
+    tighten_negative_prompts: true
+
+# Logging Configuration
+logging:
+  log_routing_decisions: true
+  log_llm_calls: true
+  log_template_matches: true
+  log_bandit_decisions: true
+  retention_days: 90
+
+# Performance Targets (for monitoring)
+performance_targets:
+  p95_latency_ms: 800
+  avg_cost_credits: 5.0
+  rule_path_percentage: 0.90
+  accept_rate: 0.80
+  regeneration_rate_max: 0.15

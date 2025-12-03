@@ -1,0 +1,932 @@
+# =============================================================================
+# Image Models Configuration - Aligned Dec 2025
+# =============================================================================
+# All models accessed via Runware API with AIR format
+# Pricing and specs from Runware documentation
+# =============================================================================
+
+version: "2.0"
+
+# =============================================================================
+# Generation Modes
+# =============================================================================
+generation_modes:
+  single:
+    enabled: true
+    description: "Single model output for quick results"
+    use_case: "RELAX and STANDARD modes, quick iterations"
+
+  dual_pipeline:
+    enabled: true
+    description: "Two models in sequence for complex/better results"
+    use_case: "COMPLEX mode, production quality, text refinement, character editing"
+    latency_multiplier: 2.5
+
+# =============================================================================
+# Scenario-Based Model Selection (Single Generation)
+# =============================================================================
+scenario_selection:
+  art_no_reference:
+    description: "Creative, artistic styles without input image"
+    priority_models:
+      1: "midjourney-v7"
+      2: "ideogram-3"
+      3: "flux-2-flex"
+      4: "seedream-4"
+      5: "qwen-image"
+
+  art_with_reference:
+    description: "Creative, artistic styles with input image guidance"
+    priority_models:
+      1: "flux-2-flex"
+      2: "nano-banana-2-pro"
+      3: "seedream-4"
+      4: "flux-1-kontext-pro"
+
+  photo_no_reference:
+    description: "Realistic photography style without input image"
+    priority_models:
+      1: "imagen-4-ultra"
+      2: "flux-2-pro"
+      3: "seedream-4"
+      4: "midjourney-v7"
+
+  photo_with_reference:
+    description: "Realistic photography with input image guidance"
+    priority_models:
+      1: "nano-banana-2-pro"
+      2: "flux-2-flex"
+      3: "flux-1-kontext-pro"
+      4: "nano-banana"
+
+# =============================================================================
+# Model Registry
+# =============================================================================
+
+model_registry:
+
+  # ---------------------------------------------------------------------------
+  # Midjourney
+  # ---------------------------------------------------------------------------
+  midjourney-v7:
+    provider: "midjourney"
+    air_id: "midjourney:3@1"
+    display_name: "Midjourney V7"
+    description: "Next-generation release emphasizing realism and control. Produces grand, cinematic imagery with fluid brushwork and deeply atmospheric tone."
+
+    workflows:
+      - "text-to-image"
+      - "image-to-image"
+
+    specs:
+      prompt_length: "1-2000 characters"
+      number_of_results: "multiple of 4 (4, 8, 12, 16, 20)"
+      reference_images: 1
+      dimensions:
+        - "1456x816 (16:9)"
+        - "816x1456 (9:16)"
+        - "1024x1024 (1:1)"
+        - "1232x928 (4:3)"
+        - "928x1232 (3:4)"
+        - "1344x896 (3:2)"
+        - "896x1344 (2:3)"
+        - "1680x720 (21:9)"
+
+      # Provider-specific parameters (via providerSettings.midjourney)
+      # These are read dynamically by _build_provider_settings()
+      provider_params:
+        quality:
+          type: "string"
+          values: ["0.25", "0.5", "1", "2"]
+          default: "1"
+          complex_default: "2"      # Use higher quality for COMPLEX mode
+          description: "Computational effort. V7 only supports 1 and 2."
+
+        stylize:
+          type: "integer"
+          min: 0
+          max: 1000
+          default: 100
+          complex_default: 200      # More artistic for COMPLEX mode
+          description: "Artistic interpretation. 0=literal, 1000=max artistic."
+
+        chaos:
+          type: "integer"
+          min: 0
+          max: 100
+          default: 0
+          description: "Variation/unpredictability. 0=consistent, higher=diverse."
+
+        weird:
+          type: "integer"
+          min: 0
+          max: 3000
+          default: 0
+          description: "Surreal/experimental effects. 0=conventional."
+
+        niji:
+          type: "string"
+          values: ["close", "0", "5", "6"]
+          default: "close"
+          description: "Rendering engine. close=standard, 5/6=anime Niji engines."
+
+    cost:
+      per_image: 0.025
+      cost_tier: "economy"
+
+    strengths:
+      - "Exceptional artistic quality"
+      - "Cinematic depth and atmosphere"
+      - "Fluid brushwork"
+      - "Strong realism and control"
+
+    weaknesses:
+      - "Poor text rendering"
+      - "Limited reference support (1 image)"
+
+  # ---------------------------------------------------------------------------
+  # Ideogram
+  # ---------------------------------------------------------------------------
+  ideogram-3:
+    provider: "ideogram"
+    air_id: "ideogram:4@1"
+    display_name: "Ideogram 3.0"
+    description: "Design-level generation with sharper text rendering and better composition. Greater stylistic control for graphic-driven content."
+
+    workflows:
+      - "text-to-image"
+
+    specs:
+      prompt_length: "1-2000 characters"
+      negative_prompt: "1-2000 characters"
+      reference_images: 0
+      style_reference_images: 4
+      dimensions:
+        # Wide range of aspect ratios from 1:3 to 3:1
+        - "1024x1024 (1:1)"
+        - "1344x768 (7:4)"
+        - "768x1344 (4:7)"
+        - "1248x832 (3:2)"
+        - "832x1248 (2:3)"
+        - "1152x864 (4:3)"
+        - "864x1152 (3:4)"
+        - "1536x512 (3:1)"
+        - "512x1536 (1:3)"
+
+      # Provider-specific parameters (via providerSettings.ideogram)
+      # These are read dynamically by _build_provider_settings()
+      provider_params:
+        renderingSpeed:
+          type: "string"
+          values: ["TURBO", "DEFAULT", "QUALITY"]
+          default: "DEFAULT"
+          complex_default: "QUALITY"    # Best quality for COMPLEX mode
+          fast_default: "TURBO"         # Fast for priority=fast
+          description: "Speed/quality balance. QUALITY only for 3.0 models."
+
+        magicPrompt:
+          type: "string"
+          values: ["AUTO", "ON", "OFF"]
+          default: "AUTO"
+          description: "Automatic prompt enhancement for better results."
+
+        styleType:
+          type: "string"
+          values: ["AUTO", "GENERAL", "REALISTIC", "DESIGN", "FICTION", "RENDER_3D", "ANIME"]
+          default: "AUTO"
+          description: "Visual style. RENDER_3D/ANIME only for 1.0/2.0 models."
+
+        styleReferenceImages:
+          type: "array"
+          max_items: 4
+          accepts: ["UUID", "data URI", "base64", "URL"]
+          formats: ["PNG", "JPG", "WEBP"]
+          description: "Up to 4 images to guide visual style without copying content."
+
+        remixStrength:
+          type: "integer"
+          min: 1
+          max: 100
+          default: 50
+          description: "Transformation intensity for Remix models."
+
+        stylePreset:
+          type: "string"
+          description: "Predefined artistic style preset (3.0 models only)."
+          values:
+            - "80S_ILLUSTRATION"
+            - "90S_NOSTALGIA"
+            - "ABSTRACT_ORGANIC"
+            - "ANALOG_NOSTALGIA"
+            - "ART_BRUT"
+            - "ART_DECO"
+            - "ART_POSTER"
+            - "AURA"
+            - "AVANT_GARDE"
+            - "BAUHAUS"
+            - "BLUEPRINT"
+            - "BLURRY_MOTION"
+            - "BRIGHT_ART"
+            - "C4D_CARTOON"
+            - "CHILDRENS_BOOK"
+            - "COLLAGE"
+            - "COLORING_BOOK_I"
+            - "COLORING_BOOK_II"
+            - "CUBISM"
+            - "DARK_AURA"
+            - "DOODLE"
+            - "DOUBLE_EXPOSURE"
+            - "DRAMATIC_CINEMA"
+            - "EDITORIAL"
+            - "EMOTIONAL_MINIMAL"
+            - "ETHEREAL_PARTY"
+            - "EXPIRED_FILM"
+            - "FLAT_ART"
+            - "FLAT_VECTOR"
+            - "FOREST_REVERIE"
+            - "GEO_MINIMALIST"
+            - "GLASS_PRISM"
+            - "GOLDEN_HOUR"
+            - "GRAFFITI_I"
+            - "GRAFFITI_II"
+            - "HALFTONE_PRINT"
+            - "HIGH_CONTRAST"
+            - "HIPPIE_ERA"
+            - "ICONIC"
+            - "JAPANDI_FUSION"
+            - "JAZZY"
+            - "LONG_EXPOSURE"
+            - "MAGAZINE_EDITORIAL"
+            - "MINIMAL_ILLUSTRATION"
+            - "MIXED_MEDIA"
+            - "MONOCHROME"
+            - "NIGHTLIFE"
+            - "OIL_PAINTING"
+            - "OLD_CARTOONS"
+            - "PAINT_GESTURE"
+            - "POP_ART"
+            - "RETRO_ETCHING"
+            - "RIVIERA_POP"
+            - "SPOTLIGHT_80S"
+            - "STYLIZED_RED"
+            - "SURREAL_COLLAGE"
+            - "TRAVEL_POSTER"
+            - "VINTAGE_GEO"
+            - "VINTAGE_POSTER"
+            - "WATERCOLOR"
+            - "WEIRD"
+            - "WOODBLOCK_PRINT"
+
+        styleCode:
+          type: "string"
+          format: "8-character hex"
+          exclusive_with: ["styleType", "styleReferenceImages"]
+          description: "Alternative to styleType (ideogram:4@2-5 only)."
+
+        colorPalette:
+          type: "object"
+          available_for: "ideogram:3@1"
+          description: "Preset or custom color palette (2.0 only)."
+          presets: ["EMBER", "FRESH", "JUNGLE", "MAGIC", "MELON", "MOSAIC", "PASTEL", "ULTRAMARINE"]
+
+    cost:
+      per_image: 0.04
+      cost_tier: "standard"
+
+    strengths:
+      - "Best-in-class text rendering"
+      - "Sharp typography"
+      - "Great for logos and posters"
+      - "Strong stylistic control"
+      - "Extensive style presets"
+
+    weaknesses:
+      - "Text-to-image only"
+      - "No reference image editing"
+
+  # ---------------------------------------------------------------------------
+  # FLUX (Black Forest Labs)
+  # ---------------------------------------------------------------------------
+  flux-2-pro:
+    provider: "bfl"
+    air_id: "bfl:5@1"
+    display_name: "FLUX.2 [pro]"
+    description: "High-quality production-ready output with robust reference-image editing. Excels at consistent results across high-volume workflows."
+
+    workflows:
+      - "text-to-image"
+      - "reference-to-image"
+
+    specs:
+      prompt_length: "1-3000 characters"
+      reference_images: 9
+      total_input_capacity: "9 megapixels"
+      dimensions:
+        min: 256
+        max: 1920
+        step: 16
+      provider_params:
+        - "promptUpsampling"
+        - "safetyTolerance"
+
+    cost:
+      input_per_mp: 0.015
+      output_first_mp: 0.03
+      output_additional_mp: 0.015
+      max_output: "4 MP"
+      cost_tier: "standard"
+      examples:
+        text_1024x1024: 0.03
+        text_1920x1080: 0.06
+        ref_1_at_1024: 0.075
+
+    strengths:
+      - "Production-ready quality"
+      - "Up to 9 reference images"
+      - "Consistent high-volume output"
+      - "Structure preservation"
+
+    weaknesses:
+      - "Less customization depth"
+
+  flux-2-flex:
+    provider: "bfl"
+    air_id: "bfl:6@1"
+    display_name: "FLUX.2 [flex]"
+    description: "Strongest text rendering accuracy in FLUX family. Fine-grained control over composition and layout. Designed for branded design, posters, and typography-driven work."
+
+    workflows:
+      - "text-to-image"
+      - "reference-to-image"
+
+    specs:
+      prompt_length: "1-3000 characters"
+      reference_images: 10
+      total_input_capacity: "14 megapixels"
+      cfg_scale:
+        min: 1
+        max: 20
+        default: 2.5
+      steps:
+        min: 1
+        max: 50
+      dimensions:
+        min: 256
+        max: 1920
+        step: 16
+      provider_params:
+        - "promptUpsampling"
+        - "safetyTolerance"
+
+    cost:
+      per_mp: 0.06
+      max_output: "4 MP"
+      cost_tier: "standard"
+      examples:
+        text_1024x1024: 0.06
+        ref_3_at_1024: 0.24
+
+    strengths:
+      - "Best text rendering in FLUX"
+      - "Up to 10 reference images"
+      - "Precise layout control"
+      - "Character/product consistency"
+
+    weaknesses:
+      - "Higher cost per MP"
+
+  flux-1-kontext-pro:
+    provider: "bfl"
+    air_id: "bfl:3@1"
+    display_name: "FLUX.1 Kontext [pro]"
+    description: "Fast, iterative editing with local and full-scene changes. Preserves style across multiple modifications."
+
+    workflows:
+      - "text-to-image"
+      - "reference-to-image"
+
+    specs:
+      prompt_length: "2-3000 characters"
+      reference_images: 2
+      dimensions:
+        - "1568x672 (21:9)"
+        - "1392x752 (16:9)"
+        - "1184x880 (4:3)"
+        - "1248x832 (3:2)"
+        - "1024x1024 (1:1)"
+        - "832x1248 (2:3)"
+        - "880x1184 (3:4)"
+        - "752x1392 (9:16)"
+        - "672x1568 (9:21)"
+      provider_params:
+        - "promptUpsampling"
+        - "safetyTolerance"
+
+    cost:
+      per_image: 0.0105
+      cost_tier: "economy"
+
+    strengths:
+      - "Fast iterative editing"
+      - "Style preservation"
+      - "Local and full-scene changes"
+      - "Low cost"
+
+    weaknesses:
+      - "Limited to 2 reference images"
+
+  # ---------------------------------------------------------------------------
+  # Google - Imagen
+  # ---------------------------------------------------------------------------
+  imagen-4-preview:
+    provider: "google"
+    air_id: "google:2@1"
+    display_name: "Imagen 4.0 Preview"
+    description: "Improved textures, lighting, and typography. Especially useful for design-heavy or detail-focused work."
+
+    workflows:
+      - "text-to-image"
+
+    specs:
+      prompt_length: "2-3000 characters"
+      prompt_tokens: 480
+      number_of_results: "1-4"
+      reference_images: 0
+      dimensions:
+        - "1024x1024 (1:1)"
+        - "768x1408 (9:16)"
+        - "1408x768 (16:9)"
+        - "896x1280 (3:4)"
+        - "1280x896 (4:3)"
+      config_params:
+        - "numberOfImages"
+        - "imageSize (1K, 2K)"
+        - "aspectRatio"
+        - "personGeneration"
+      watermark: "SynthID invisible watermark"
+
+    cost:
+      per_image: 0.04
+      cost_tier: "standard"
+
+    strengths:
+      - "Improved textures and lighting"
+      - "Better typography"
+      - "Detail-focused"
+
+    weaknesses:
+      - "Text-to-image only"
+      - "No reference support"
+
+  imagen-4-ultra:
+    provider: "google"
+    air_id: "google:2@2"
+    display_name: "Imagen 4.0 Ultra"
+    description: "Google's most advanced image model. Exceptional detail, color accuracy, and prompt adherence. Ideal for demanding use cases."
+
+    workflows:
+      - "text-to-image"
+
+    specs:
+      prompt_length: "2-3000 characters"
+      prompt_tokens: 480
+      number_of_results: "1-4"
+      reference_images: 0
+      dimensions:
+        - "1024x1024 (1:1)"
+        - "768x1408 (9:16)"
+        - "1408x768 (16:9)"
+        - "896x1280 (3:4)"
+        - "1280x896 (4:3)"
+      config_params:
+        - "numberOfImages"
+        - "imageSize (1K, 2K)"
+        - "aspectRatio"
+        - "personGeneration"
+      watermark: "SynthID invisible watermark"
+
+    cost:
+      per_image: 0.06
+      cost_tier: "premium"
+
+    strengths:
+      - "Exceptional detail"
+      - "Best color accuracy"
+      - "Strong prompt adherence"
+      - "Production quality"
+
+    weaknesses:
+      - "Text-to-image only"
+      - "No reference support"
+      - "Higher cost"
+
+  # ---------------------------------------------------------------------------
+  # Google - Nano Banana (Gemini)
+  # ---------------------------------------------------------------------------
+  nano-banana:
+    provider: "google"
+    air_id: "google:4@1"
+    display_name: "Nano Banana"
+    alias: "Gemini Flash Image 2.5"
+    description: "Rapid, interactive image workflows with sophisticated editing. Prompt-based modifications, multi-image fusion, and conversational editing flows."
+
+    workflows:
+      - "text-to-image"
+      - "image-to-image"
+
+    specs:
+      prompt_length: "2-3000 characters"
+      reference_images: 8
+      dimensions:
+        text_to_image:
+          - "1024x1024 (1:1)"
+          - "1248x832 (3:2)"
+          - "832x1248 (2:3)"
+          - "1184x864 (4:3)"
+          - "864x1184 (3:4)"
+          - "1152x896 (5:4)"
+          - "896x1152 (4:5)"
+          - "1344x768 (16:9)"
+          - "768x1344 (9:16)"
+          - "1536x672 (21:9)"
+        image_to_image: "auto-match reference aspect ratio"
+      input_requirements:
+        min_size: 300
+        max_size: 2048
+        max_file_size: "20MB"
+      watermark: "SynthID invisible watermark"
+
+    cost:
+      per_image: 0.039
+      cost_tier: "standard"
+
+    strengths:
+      - "Up to 8 reference images"
+      - "Multi-image fusion"
+      - "Conversational editing"
+      - "Context-aware edits"
+
+    weaknesses:
+      - "Lower quality than Pro"
+
+  nano-banana-2-pro:
+    provider: "google"
+    air_id: "google:4@2"
+    display_name: "Nano Banana 2 Pro"
+    alias: "Gemini 3 Pro Image Preview"
+    description: "Advanced tier with professional-grade controls. Sophisticated handling of lighting, camera angles, aspect ratio control, high-resolution output up to 4K, and advanced text rendering."
+
+    workflows:
+      - "text-to-image"
+      - "image-to-image"
+
+    specs:
+      prompt_length: "3-45000 characters"
+      reference_images: 14
+      dimensions:
+        1k:
+          - "1024x1024 (1:1)"
+          - "1264x848 (3:2)"
+          - "848x1264 (2:3)"
+          - "1200x896 (4:3)"
+          - "896x1200 (3:4)"
+          - "928x1152 (4:5)"
+          - "1152x928 (5:4)"
+          - "768x1376 (9:16)"
+          - "1376x768 (16:9)"
+          - "1548x672 (21:9)"
+        2k:
+          - "2048x2048 (1:1)"
+          - "2528x1696 (3:2)"
+          - "1696x2528 (2:3)"
+          - "2400x1792 (4:3)"
+          - "1792x2400 (3:4)"
+          - "1856x2304 (4:5)"
+          - "2304x1856 (5:4)"
+          - "1536x2752 (9:16)"
+          - "2752x1536 (16:9)"
+          - "3168x1344 (21:9)"
+        4k:
+          - "4096x4096 (1:1)"
+          - "5056x3392 (3:2)"
+          - "3392x5056 (2:3)"
+          - "4800x3584 (4:3)"
+          - "3584x4800 (3:4)"
+          - "3712x4608 (4:5)"
+          - "4608x3712 (5:4)"
+          - "3072x5504 (9:16)"
+          - "5504x3072 (16:9)"
+          - "6336x2688 (21:9)"
+      dimension_behavior:
+        text_to_image: "explicit width/height required"
+        image_to_image: "auto-match or explicit with resolution tier"
+      input_requirements:
+        min_size: 300
+        max_size: 2048
+        max_file_size: "20MB"
+      watermark: "SynthID invisible watermark"
+
+    cost:
+      per_image_1k: 0.134
+      per_image_4k: 0.24
+      cost_tier: "premium"
+
+    strengths:
+      - "Up to 14 reference images"
+      - "4K output support"
+      - "Professional-grade controls"
+      - "Advanced text rendering"
+      - "Sophisticated lighting/camera control"
+
+    weaknesses:
+      - "Highest cost tier"
+      - "Slower generation"
+
+  # ---------------------------------------------------------------------------
+  # ByteDance - Seedream
+  # ---------------------------------------------------------------------------
+  seedream-4:
+    provider: "bytedance"
+    air_id: "bytedance:5@0"
+    display_name: "Seedream 4.0"
+    description: "Ultra-fast 2K/4K rendering with unique sequential image capabilities. Maintains character consistency across outputs. Supports complex editing through natural language commands."
+
+    workflows:
+      - "text-to-image"
+      - "image-to-image"
+
+    specs:
+      prompt_length: "1-2000 characters"
+      reference_images: 14
+      sequential_images: "multiple related outputs"
+      combined_limit: "reference + sequential <= 15"
+      dimensions:
+        1k:
+          - "1024x1024 (1:1)"
+        2k:
+          - "2048x2048 (1:1)"
+          - "2304x1728 (4:3)"
+          - "1728x2304 (3:4)"
+          - "2560x1440 (16:9)"
+          - "1440x2560 (9:16)"
+          - "2496x1664 (3:2)"
+          - "1664x2496 (2:3)"
+          - "3024x1296 (21:9)"
+        4k:
+          - "4096x4096 (1:1)"
+          - "4608x3456 (4:3)"
+          - "3456x4608 (3:4)"
+          - "5120x2880 (16:9)"
+          - "2880x5120 (9:16)"
+          - "4992x3328 (3:2)"
+          - "3328x4992 (2:3)"
+          - "6048x2592 (21:9)"
+      provider_params:
+        - "maxSequentialImages"
+
+    cost:
+      per_image: 0.03
+      cost_tier: "economy"
+
+    strengths:
+      - "Ultra-fast 2K/4K rendering"
+      - "Sequential image generation"
+      - "Character consistency"
+      - "Up to 14 references"
+      - "Storyboard creation"
+
+    weaknesses:
+      - "Sequential output may vary"
+
+  # ---------------------------------------------------------------------------
+  # Alibaba - Qwen
+  # ---------------------------------------------------------------------------
+  qwen-image:
+    provider: "alibaba"
+    air_id: "runware:108@1"
+    display_name: "Qwen-Image"
+    alias: "qwen-image-plus"
+    description: "Cost-effective text-to-image generation with strong text rendering and prompt optimization."
+
+    workflows:
+      - "text-to-image"
+
+    specs:
+      prompt_length: "max 800 characters"
+      negative_prompt: "max 500 characters"
+      number_of_results: 1
+      reference_images: 0
+      dimensions:
+        - "1664x928 (16:9)"
+        - "1472x1140 (4:3)"
+        - "1328x1328 (1:1, default)"
+        - "1140x1472 (3:4)"
+        - "928x1664 (9:16)"
+      params:
+        - "prompt_extend"
+        - "watermark"
+        - "seed"
+
+    cost:
+      per_image: 0.0058
+      cost_tier: "economy"
+
+    strengths:
+      - "Very low cost"
+      - "Good text rendering"
+      - "Prompt optimization"
+
+    weaknesses:
+      - "Single output only"
+      - "No reference support"
+      - "Limited dimensions"
+
+  qwen-image-edit:
+    provider: "alibaba"
+    air_id: "runware:108@20"
+    display_name: "Qwen-Image-Edit"
+    alias: "qwen-image-edit-plus"
+    description: "Image editing with multi-image fusion. Targeted changes with style and composition preservation. Excellent bilingual text editing."
+    role: "editor"
+
+    workflows:
+      - "image-to-image"
+
+    specs:
+      prompt_length: "max 800 characters"
+      negative_prompt: "max 500 characters"
+      input_images: "1-3 images"
+      number_of_results: "1-6 (plus), 1 (standard)"
+      input_requirements:
+        min_size: 384
+        max_size: 3072
+        max_file_size: "10MB"
+      output_size:
+        min: 512
+        max: 2048
+        default: "1024x1024"
+      params:
+        - "prompt_extend"
+        - "watermark"
+        - "seed"
+
+    cost:
+      per_image_plus: 0.03
+      per_image_standard: 0.045
+      cost_tier: "economy"
+
+    strengths:
+      - "Multi-image fusion (1-3 inputs)"
+      - "Targeted edits"
+      - "Bilingual text editing"
+      - "Composition preservation"
+      - "Very low cost"
+
+    weaknesses:
+      - "Editor only (no generation)"
+
+# =============================================================================
+# Dual Model Pipeline Configuration
+# =============================================================================
+
+dual_pipeline:
+  # Pipeline 1: High-Creative Art
+  creative_art:
+    name: "High-Creative Art Pipeline"
+    description: "Painterly concept art with character refinement and text correction"
+    use_cases:
+      - "Concept art and illustrations"
+      - "Stylized artwork with text overlays"
+      - "Creative compositions needing text accuracy"
+
+    stage_1:
+      role: "generator"
+      model: "midjourney-v7"
+      purpose: "Generate creative, non-realistic composition"
+
+    stage_2:
+      role: "editor"
+      model: "nano-banana-2-pro"
+      purpose: "Refine characters, add/correct text, adjust elements"
+
+    cost_estimate:
+      stage_1: 0.025
+      stage_2_1k: 0.134
+      stage_2_4k: 0.24
+      total_1mp: 0.16
+
+  # Pipeline 2: Photorealistic
+  photorealistic:
+    name: "Photorealistic Pipeline"
+    description: "High-quality photo-real base with character and style editing"
+    use_cases:
+      - "Product photography with editing needs"
+      - "Realistic scenes requiring modifications"
+      - "Images needing text overlays or color grading"
+
+    stage_1:
+      role: "generator"
+      model: "imagen-4-ultra"
+      purpose: "Generate photorealistic base with exceptional detail"
+
+    stage_2:
+      role: "editor"
+      model: "nano-banana-2-pro"
+      purpose: "Character edits, text overlays, stylistic adjustments"
+
+    cost_estimate:
+      stage_1: 0.06
+      stage_2_1k: 0.134
+      stage_2_4k: 0.24
+      total_1mp: 0.19
+      total_4mp: 0.30
+
+  # Pipeline 3: Layout & Poster
+  layout_poster:
+    name: "Layout & Poster Design Pipeline"
+    description: "Complex layouts with precise typography, then localized edits"
+    use_cases:
+      - "Marketing posters and banners"
+      - "Infographics with multiple text blocks"
+      - "Designs requiring bilingual text"
+
+    stage_1:
+      role: "generator"
+      model: "flux-2-flex"
+      purpose: "Generate layout with accurate text placement"
+
+    stage_2:
+      role: "editor"
+      model: "qwen-image-edit"
+      purpose: "Targeted edits, text correction, color adjustments"
+
+    cost_estimate:
+      stage_1_per_mp: 0.06
+      stage_2: 0.03
+      total_1mp: 0.09
+
+# =============================================================================
+# Pipeline Selection Logic
+# =============================================================================
+pipeline_selection:
+  triggers:
+    - "Mode is COMPLEX"
+    - "User requests text in image with high accuracy"
+    - "Character refinement needed"
+    - "Multi-element composition"
+    - "Print-ready production"
+
+  intent_mapping:
+    creative_with_text: "creative_art"
+    concept_art_refined: "creative_art"
+    product_photo_edited: "photorealistic"
+    portrait_with_adjustments: "photorealistic"
+    marketing_poster: "layout_poster"
+    infographic: "layout_poster"
+    banner_design: "layout_poster"
+
+# =============================================================================
+# Cost Tiers
+# =============================================================================
+cost_tiers:
+  economy:
+    max_per_image: 0.03
+    models:
+      - "midjourney-v7"
+      - "flux-1-kontext-pro"
+      - "seedream-4"
+      - "qwen-image"
+      - "qwen-image-edit"
+
+  standard:
+    max_per_image: 0.08
+    models:
+      - "ideogram-3"
+      - "flux-2-pro"
+      - "flux-2-flex"
+      - "imagen-4-preview"
+      - "nano-banana"
+
+  premium:
+    max_per_image: 0.25
+    models:
+      - "imagen-4-ultra"
+      - "nano-banana-2-pro"
+
+# =============================================================================
+# Fallback Strategy
+# =============================================================================
+fallback_strategy:
+  on_model_unavailable: "next_priority"
+  on_rate_limit: "next_priority"
+  on_error: "retry_once_then_fallback"
+  max_fallback_attempts: 3
+
+# =============================================================================
+# Default Settings
+# =============================================================================
+defaults:
+  dimensions: "1024x1024"
+  min_resolution: 512
+  cfg_scale: 7.5
+  seed: null

@@ -1,0 +1,275 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-py"
+  interface = "asyncio"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+}
+
+model Asset {
+  id           String    @id @default(uuid())
+  shop         String    // Shopify shop domain
+  taskId       String    @unique // Task ID from agents-api (unique for update operations)
+  imageUrl     String?   // Generated image URL
+  thumbnailUrl String?   // Thumbnail URL
+  prompt       String    // Original prompt
+  style        String    @default("realistic") // realistic, artistic, cartoon
+  dimensions   String    @default("1024x1024") // Image dimensions
+  model        String    @default("gemini") // AI model used
+  status       String    @default("processing") // processing, completed, failed
+  cost         Int       @default(10) // Credits used
+  metadata     Json?     // Additional metadata
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime? // Soft delete
+
+  @@index([shop])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Phase 4: Template model for reusable prompt templates
+model Template {
+  id          String    @id @default(uuid())
+  name        String    @unique // Template name (e.g., "Product Photography")
+  category    String    // "product", "lifestyle", "creative"
+  promptText  String    @db.Text // Template prompt text
+  style       String    @default("realistic") // Default style for template
+  tags        String[]  // Search tags
+  language    String    @default("en") // Template language
+  isActive    Boolean   @default(true) // Active/inactive status
+  createdBy   String?   // Admin user ID
+
+  // Learning and analytics fields
+  usageCount  Int       @default(0) // Track template usage
+  acceptRate  Float?    // 0.0-1.0 acceptance rate
+  avgScore    Float?    // 0.0-1.0 average quality score
+  lastUsed    DateTime? // Last time template was used
+  source      String    @default("manual") // "manual" or "llm-promoted"
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([category])
+  @@index([isActive])
+  @@index([usageCount])
+}
+
+// Phase 4: AgentLog model for tracking agent execution
+model AgentLog {
+  id            String   @id @default(uuid())
+  shop          String   // Shopify shop domain
+  taskId        String   // Generation task ID
+  agentName     String   // "planner", "prompt_manager", "model_selection", "evaluation"
+  input         Json     // Agent input data
+  output        Json     // Agent output/decision
+  reasoning     String?  @db.Text // Agent's reasoning process
+  executionTime Int      // Execution time in milliseconds
+  status        String   // "success", "failed", "skipped"
+
+  // Routing and observability fields
+  routingMode   String?  // "rule", "llm", "hybrid"
+  usedLlm       Boolean  @default(false)
+  confidence    Float?   // 0.0-1.0
+  fallbackUsed  Boolean  @default(false)
+  creditsUsed   Int      @default(0)
+  llmTokens     Int?     // LLM API token usage
+  modelName     String?  // Model used (e.g., "gemini-2.0-flash", "gpt-4o")
+
+  createdAt     DateTime @default(now())
+
+  @@index([taskId])
+  @@index([shop])
+  @@index([agentName])
+  @@index([routingMode])
+  @@index([createdAt])
+}
+
+// Phase 4: ModelConfig model for AI model configuration
+model ModelConfig {
+  id           String   @id @default(uuid())
+  modelName    String   @unique // "gemini-2.0-flash", "imagen-3.0-fast", etc.
+  provider     String   // "google", "openai", "anthropic"
+  costPerGen   Int      // Credits per generation
+  isEnabled    Boolean  @default(true) // Enable/disable model
+  capabilities Json     // { "styles": ["realistic", "artistic"], "maxDimensions": "1024x1024" }
+  priority     Int      @default(0) // Higher = preferred selection
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// Phase 4: ModelStats model for UCB1 bandit algorithm
+model ModelStats {
+  id          String   @id @default(uuid())
+  modelName   String   // FK to ModelConfig.modelName
+  bucket      String   // Use-case bucket: "product:realistic:white-bg"
+  impressions Int      @default(0) // Number of times selected (n_i)
+  rewardMean  Float    @default(0.5) // EMA of rewards (μ_i)
+  rewardVar   Float    @default(0.1) // Variance for UCB1-Tuned (optional)
+  lastUpdated DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@unique([modelName, bucket])
+  @@index([bucket])
+  @@index([modelName])
+  @@index([lastUpdated])
+}
+
+// Task model for comprehensive pipeline execution logs
+model Task {
+  id                    String    @id @default(uuid())
+  taskId                String    @unique
+  shop                  String
+  originalPrompt        String    @db.Text
+  userRequest           Json?
+  stages                Json      // All 10 stage results
+  promptJourney         Json      // Prompt transformations
+  totalDuration         Int       // Total execution time in ms
+  creditsCost           Int       // Total credits used
+  performanceBreakdown  Json      // Per-stage metrics
+  evaluationResults     Json?     // Quality scores
+  generatedImageUrl     String?
+  mockupUrls            Json?
+  finalPrompt           String?   @db.Text
+  status                String    // completed/failed/processing
+  errorMessage          String?   @db.Text
+  createdAt             DateTime  @default(now())
+  completedAt           DateTime?
+  updatedAt             DateTime  @updatedAt
+
+  @@index([taskId])
+  @@index([shop])
+  @@index([status])
+  @@index([createdAt])
+  @@index([completedAt])
+}
+
+// ============================================================================
+// Phase 1 (Palet8 Agent Restructure): New models for multi-agent framework
+// ============================================================================
+
+// Conversation model for multi-turn chat with agents
+model Conversation {
+  id          String         @id @default(cuid())
+  userId      String
+  jobId       String?
+  status      String         @default("active") // active, completed, abandoned
+  metadata    Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relations
+  job         Job?           @relation(fields: [jobId], references: [id])
+  messages    ChatMessage[]
+
+  @@index([userId])
+  @@index([jobId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ChatMessage model for conversation history (named to avoid Prisma reserved word)
+model ChatMessage {
+  id              String       @id @default(cuid())
+  conversationId  String
+  role            String       // system, user, assistant, tool
+  content         String?      @db.Text
+  toolCalls       Json?        // Tool calls if assistant message
+  toolResult      Json?        // Tool result if tool message
+  metadata        Json?
+  createdAt       DateTime     @default(now())
+
+  // Relations
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([role])
+  @@index([createdAt])
+}
+
+// Job model for agent task execution (aligned with Documentation Section 5.3.3)
+model Job {
+  id              String         @id @default(cuid())
+  userId          String
+  status          String         @default("INIT") // INIT, COLLECTING_REQUIREMENTS, PLANNING, GENERATING, EVALUATING, COMPLETED, REJECTED, FAILED, ABANDONED
+
+  // Task data
+  requirements    Json?          // User requirements from Pali Agent
+  plan            Json?          // Execution plan from Planner Agent
+  prompt          Json?          // Final prompt (positive, negative, parameters)
+  evaluation      Json?          // Evaluation results
+  safetyCheck     Json?          // Safety check results
+
+  // Cost tracking
+  creditCost      Float          @default(0)
+
+  // Metadata
+  metadata        Json?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  conversations   Conversation[]
+  designs         Design[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Design model for generated outputs
+model Design {
+  id              String    @id @default(cuid())
+  jobId           String
+  assetId         String?   // Reference to Asset model
+
+  // Generation details
+  prompt          String    @db.Text
+  negativePrompt  String?   @db.Text
+  modelUsed       String
+  parameters      Json?     // Generation parameters (steps, guidance, seed, etc.)
+
+  // Evaluation
+  evaluationScore Float?
+  evaluationData  Json?     // Full evaluation breakdown
+
+  // Status
+  status          String    @default("pending") // pending, approved, rejected
+  imageUrl        String?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  job             Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([status])
+  @@index([createdAt])
+}

@@ -1,0 +1,45 @@
+[tool.poetry]
+name = "phase2-agent-backend"
+version = "0.1.0"
+description = "Phase 2 Multi-Agent Backend with Google ADK, Gemini, ChatGPT, Flux and Gemini Image Generation"
+authors = ["Your Team <team@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["test_suite"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "real_api: marks tests that make real API calls (deselect with '-m \"not real_api\"')",
+    "asyncio: marks tests as async (handled automatically by asyncio_mode=auto)",
+]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

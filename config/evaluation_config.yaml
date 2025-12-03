@@ -1,0 +1,105 @@
+# =============================================================================
+# Evaluation Configuration - Aligned Dec 2025
+# =============================================================================
+# Core Rules:
+# 1. No "downgrade" state - only APPROVE or POLICY_FAIL (for NSFW)
+# 2. RELAX/STANDARD: Quality scoring is internal only, never blocks
+# 3. COMPLEX: Can auto-retry if below threshold, user sees best result
+# 4. Min image size: 512px on shortest side
+# =============================================================================
+
+version: "1.0"
+
+# Image size requirements
+image_size:
+  min_resolution: 512       # Minimum on shortest side
+  auto_upscale: true        # Auto-bump to 512 if user requests lower
+
+# Max retries for COMPLEX mode auto-regeneration
+max_retries: 3
+
+# =============================================================================
+# Mode Behavior
+# =============================================================================
+# RELAX/STANDARD: Quality never blocks, only NSFW can block
+# COMPLEX: Can auto-retry if below threshold, user sees best result
+# =============================================================================
+modes:
+  RELAX:
+    threshold: 0.60
+    quality_blocks: false
+    behavior: "approve_always"    # Always approve if safe
+    description: "Quick concepts, minimal styling"
+
+  STANDARD:
+    threshold: 0.70
+    quality_blocks: false
+    behavior: "approve_always"    # Always approve if safe
+    description: "Clear style direction, composition matters"
+
+  COMPLEX:
+    threshold: 0.80
+    quality_blocks: true
+    behavior: "retry_until_threshold"  # Auto-regenerate, show best result
+    description: "Technical specs, print constraints, production"
+
+# =============================================================================
+# Scoring Weights (Internal Analytics Only)
+# =============================================================================
+# These scores are for internal use:
+# - Analytics and reporting
+# - Smarter future suggestions
+# - Auto-improvement learning
+# NOT visible to users as "quality grade"
+# =============================================================================
+
+# Result quality weights (Phase 2: after generation)
+result_weights:
+  prompt_fidelity: 0.20       # Image matches what was requested
+  product_readiness: 0.20     # Usable as commercial product asset
+  technical_quality: 0.15     # Resolution, sharpness, no artifacts
+  background_composition: 0.15  # Background type and composition
+  aesthetic: 0.15             # Visual appeal and style consistency
+  text_legibility: 0.05       # Text/logos readable (if applicable)
+  safety: 0.10                # Policy compliance
+
+# Prompt quality weights (Phase 1: before generation)
+prompt_weights:
+  coverage: 0.20              # Required dimensions present
+  clarity: 0.20               # No contradictions, self-consistent
+  product_constraints: 0.20   # Aligned with print method
+  style_alignment: 0.15       # Matches brand/mode style
+  safety: 0.15                # Policy compliance at prompt level
+  control_surface: 0.10       # Negative prompt quality
+
+# =============================================================================
+# Decisions (Simplified)
+# =============================================================================
+# Only two user-visible outcomes:
+# - APPROVE: Show image to user
+# - POLICY_FAIL: Don't generate/show (NSFW or extreme safety)
+#
+# REJECT exists internally for COMPLEX mode retry only
+# =============================================================================
+decisions:
+  user_visible:
+    - "APPROVE"         # Show image to user
+    - "POLICY_FAIL"     # Don't generate/show (NSFW or extreme safety)
+
+  internal_only:
+    - "REJECT"          # COMPLEX mode auto-retry (not user-visible)
+    - "PASS"            # Prompt phase: proceed to generation
+
+# =============================================================================
+# Decision Logic Summary
+# =============================================================================
+# Phase 1 (Prompt):
+#   - NSFW detected → POLICY_FAIL (stop)
+#   - Otherwise → PASS (proceed to generation)
+#
+# Phase 2 (Image):
+#   - NSFW detected → POLICY_FAIL (don't show)
+#   - RELAX/STANDARD mode → APPROVE (always, scores are internal)
+#   - COMPLEX mode + score >= threshold → APPROVE
+#   - COMPLEX mode + score < threshold → REJECT (auto-retry internally)
+# =============================================================================

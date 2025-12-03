@@ -1,0 +1,25 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.pytest_cache
+.coverage
+htmlcov
+.env
+.venv
+env/
+venv/
+.git
+.gitignore
+README.md
+*.md
+.DS_Store
+
+# Include Prisma migrations in production container for automated deployment
+# This allows 'prisma migrate deploy' to run during container startup

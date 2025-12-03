@@ -1,0 +1,658 @@
+# =============================================================================
+# PROMPT FEW-SHOT LIBRARY - MODULAR DIMENSION FORMAT
+# =============================================================================
+# Version: 1.0.0
+#
+# Structure:
+#   - Dimension definitions (what each dimension controls)
+#   - Mode mappings (which dimensions per mode)
+#   - Print method constraints
+#   - Examples organized by product × style
+#
+# Usage:
+#   Prompt Writer Service selects dimensions based on:
+#   - Mode (RELAX/STANDARD/COMPLEX)
+#   - Product type
+#   - Print method
+#   - User requirements
+#
+#   Then assembles: dimension1 + dimension2 + ... into final prompt
+# =============================================================================
+
+metadata:
+  version: "1.0.0"
+  schema_version: 2
+  format: "modular_dimensions"
+
+# =============================================================================
+# DIMENSION DEFINITIONS
+# =============================================================================
+
+dimensions:
+  # --- CORE (P1 - Critical) ---
+  subject:
+    description: "What is shown - the main focus"
+    priority: "P1"
+    required: true
+    examples:
+      - "fierce tiger in attack stance"
+      - "sleeping cat curled up"
+      - "astronaut floating"
+      - "monstera leaves overlapping"
+
+  aesthetic:
+    description: "Visual style and artistic approach"
+    priority: "P1"
+    required: true
+    examples:
+      - "streetwear graffiti illustration"
+      - "kawaii cute cartoon"
+      - "vintage national park badge"
+      - "botanical scientific illustration"
+
+  color:
+    description: "Color palette and color relationships"
+    priority: "P1"
+    required: true
+    examples:
+      - "orange and black with white highlights"
+      - "pastel purple and mint"
+      - "earth tones: forest green, brown, cream"
+      - "cosmic purple to teal gradient"
+
+  # --- COMPOSITION (P2 - Important) ---
+  composition:
+    description: "Layout, framing, and spatial arrangement"
+    priority: "P2"
+    required_for: ["STANDARD", "COMPLEX"]
+    examples:
+      - "centered chest placement"
+      - "horizontal wrap-around"
+      - "edge-to-edge vertical"
+      - "circular badge format"
+
+  background:
+    description: "Background treatment and context"
+    priority: "P2"
+    required_for: ["STANDARD", "COMPLEX"]
+    examples:
+      - "transparent/none"
+      - "solid white"
+      - "subtle texture"
+      - "gradient fade"
+
+  lighting:
+    description: "Light quality and direction"
+    priority: "P2"
+    required_for: ["STANDARD", "COMPLEX"]
+    examples:
+      - "flat, even"
+      - "high contrast"
+      - "soft ambient"
+      - "dramatic side light"
+
+  # --- DETAIL (P3 - Optional) ---
+  texture:
+    description: "Surface quality and material feel"
+    priority: "P3"
+    required_for: ["COMPLEX"]
+    examples:
+      - "clean vector edges"
+      - "hand-drawn sketch lines"
+      - "watercolor washes"
+      - "halftone dots"
+
+  detail_level:
+    description: "Amount of fine detail"
+    priority: "P3"
+    required_for: ["COMPLEX"]
+    examples:
+      - "simplified shapes"
+      - "medium detail"
+      - "highly detailed"
+      - "photorealistic"
+
+  mood:
+    description: "Emotional tone and atmosphere"
+    priority: "P3"
+    required_for: ["STANDARD", "COMPLEX"]
+    examples:
+      - "aggressive, confident"
+      - "cozy, warm"
+      - "dreamy, ethereal"
+      - "playful, energetic"
+
+  # --- PORTRAIT (P4 - When applicable) ---
+  expression:
+    description: "Facial expression for characters"
+    priority: "P4"
+    applies_to: ["character", "portrait"]
+    examples:
+      - "fierce, intense"
+      - "peaceful, content"
+      - "playful, smiling"
+      - "mysterious, neutral"
+
+  pose:
+    description: "Body position and gesture"
+    priority: "P4"
+    applies_to: ["character", "portrait"]
+    examples:
+      - "forward attack stance"
+      - "curled up sleeping"
+      - "floating weightless"
+      - "dynamic action"
+
+  # --- STYLE REFERENCE (P5) ---
+  art_movement:
+    description: "Art historical reference"
+    priority: "P5"
+    optional: true
+    examples:
+      - "art nouveau"
+      - "pop art"
+      - "japanese ukiyo-e"
+      - "minimalist modern"
+
+  reference_style:
+    description: "Contemporary style reference"
+    priority: "P5"
+    optional: true
+    examples:
+      - "studio ghibli inspired"
+      - "vintage travel poster"
+      - "memphis design"
+      - "vaporwave aesthetic"
+
+  # --- TECHNICAL (Print-specific) ---
+  technical:
+    description: "Production constraints - selected by print method"
+    priority: "COMPLEX_ONLY"
+    includes:
+      - color_separation
+      - line_weight
+      - safe_zone
+      - bleed
+      - dpi
+      - special_requirements
+
+# =============================================================================
+# MODE MAPPINGS
+# =============================================================================
+
+mode_dimensions:
+  RELAX:
+    required: [subject, aesthetic, color]
+    optional: [mood]
+    exclude: [technical, composition, lighting, texture]
+    token_range: [20, 50]
+
+  STANDARD:
+    required: [subject, aesthetic, color, composition, background, mood]
+    optional: [lighting, texture]
+    exclude: [technical]
+    token_range: [50, 150]
+
+  COMPLEX:
+    required: [subject, aesthetic, color, composition, background, lighting, texture, mood, technical]
+    optional: [art_movement, reference_style]
+    token_range: [150, 400]
+
+# =============================================================================
+# PRINT METHOD CONSTRAINTS
+# =============================================================================
+
+print_methods:
+  screen_print:
+    max_colors: 6
+    supports_gradients: false
+    technical_template:
+      color_separation: "{n}-color spot print: {color_list}"
+      shading: "halftone dots, no smooth gradients"
+      line_weight: "minimum 0.5pt stroke for fabric printing"
+      notes: "color separated layers, white underbase for dark garments"
+
+  dtg:
+    max_colors: null
+    supports_gradients: true
+    technical_template:
+      color_mode: "full color CMYK"
+      gradients: "smooth gradients allowed"
+      detail: "fine detail supported"
+
+  sublimation:
+    max_colors: null
+    supports_gradients: true
+    technical_template:
+      edges: "seamless edge connection required"
+      bleed: "0.125 inch bleed all sides"
+      notes: "vibrant colors, edge-to-edge coverage"
+
+  embroidery:
+    max_colors: 12
+    supports_gradients: false
+    technical_template:
+      thread_colors: "{n} thread colors: {color_list}"
+      stitch_types: "satin stitch outlines, fill stitch areas"
+      min_detail: "minimum 2mm detail size"
+      shading: "stippled fill, no gradients"
+      notes: "simplified shapes for clean thread definition"
+
+  uv_print:
+    max_colors: null
+    supports_gradients: true
+    technical_template:
+      finish: "optimized for glossy UV finish"
+      contrast: "high contrast for surface printing"
+      notes: "protect functional areas (camera cutouts, buttons)"
+
+  giclee:
+    max_colors: null
+    supports_gradients: true
+    technical_template:
+      dpi: "300 DPI"
+      color_profile: "sRGB for accurate reproduction"
+      bleed: "{bleed_inches} inch margin for matting"
+      notes: "archival quality, rich gradients"
+
+  engraving:
+    max_colors: 1
+    supports_gradients: false
+    technical_template:
+      mode: "monochrome line art"
+      depth: "contrast through line density"
+      min_line: "minimum 0.5mm line width"
+
+# =============================================================================
+# PRODUCT SPECIFICATIONS
+# =============================================================================
+
+products:
+  # APPAREL
+  mens_tshirt:
+    category: "apparel"
+    print_area: {width: 12, height: 16, unit: "inch", dpi: 300}
+    default_method: "dtg"
+    safe_zone: {width: 11, height: 15}
+    default_mode: "STANDARD"
+
+  womens_tshirt:
+    category: "apparel"
+    print_area: {width: 10, height: 14, unit: "inch", dpi: 300}
+    default_method: "dtg"
+    default_mode: "STANDARD"
+
+  hoodie:
+    category: "apparel"
+    print_area: {width: 14, height: 16, unit: "inch", dpi: 300}
+    default_method: "dtg"
+    default_mode: "STANDARD"
+
+  tank_top:
+    category: "apparel"
+    print_area: {width: 10, height: 14, unit: "inch", dpi: 300}
+    default_method: "dtg"
+    default_mode: "RELAX"
+
+  # ACCESSORIES
+  phone_case:
+    category: "accessories"
+    print_area: {width: 3, height: 6, unit: "inch", dpi: 300}
+    default_method: "uv_print"
+    protected_areas: ["camera_cutout", "buttons"]
+    default_mode: "STANDARD"
+
+  tote_bag:
+    category: "accessories"
+    print_area: {width: 14, height: 14, unit: "inch", dpi: 300}
+    default_method: "dtg"
+    default_mode: "STANDARD"
+
+  hat:
+    category: "accessories"
+    print_area: {width: 4, height: 2.5, unit: "inch", dpi: 300}
+    default_method: "embroidery"
+    default_mode: "COMPLEX"
+
+  # HOME & LIVING
+  mug_11oz:
+    category: "home"
+    print_area: {width: 9, height: 3.5, unit: "inch", dpi: 300}
+    default_method: "sublimation"
+    wrap: "seamless horizontal"
+    default_mode: "STANDARD"
+
+  poster_18x24:
+    category: "home"
+    print_area: {width: 18, height: 24, unit: "inch", dpi: 300}
+    default_method: "giclee"
+    default_mode: "STANDARD"
+
+  canvas_16x20:
+    category: "home"
+    print_area: {width: 16, height: 20, unit: "inch", dpi: 300}
+    default_method: "giclee"
+    gallery_wrap_bleed: 1.5
+    default_mode: "COMPLEX"
+
+  # EMBROIDERY
+  patch:
+    category: "embroidery"
+    print_area: {width: 3.5, height: 3.5, unit: "inch", dpi: 300}
+    default_method: "embroidery"
+    edge_finish: "merrowed"
+    default_mode: "COMPLEX"
+
+# =============================================================================
+# FEW-SHOT EXAMPLES BY STYLE
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # STREETWEAR TIGER (Apparel - Screen Print)
+  # ---------------------------------------------------------------------------
+  streetwear_tiger:
+    product_types: ["mens_tshirt", "hoodie"]
+    print_method: "screen_print"
+
+    dimensions:
+      subject: "fierce tiger in forward attack stance"
+      aesthetic: "urban streetwear illustration, bold vector outlines, graffiti influence"
+      color: "orange body, black outlines, white highlights, gray shadows"
+      composition: "centered, facing viewer, fills chest area"
+      background: "transparent/none"
+      lighting: "flat, high contrast"
+      texture: "clean vector edges, halftone dot shading"
+      mood: "aggressive, confident, urban edge"
+      pose: "forward attack stance, intense gaze"
+      expression: "fierce, powerful"
+
+    technical:
+      color_separation: "4-color spot print: black, orange, white, gray"
+      shading: "halftone dots for shading, no smooth gradients"
+      line_weight: "bold outlines minimum 0.5pt for fabric printing"
+      safe_zone: "11x15 inch safe zone on 12x16 print area"
+      bleed: "0.5 inch bleed all sides"
+      notes: "color separated layers, white underbase for dark garments"
+      safety: "no logos, brand names, or copyrighted content"
+
+  # ---------------------------------------------------------------------------
+  # KAWAII GHOST SKATER (Apparel - Screen Print)
+  # ---------------------------------------------------------------------------
+  kawaii_ghost:
+    product_types: ["hoodie", "sweatshirt"]
+    print_method: "screen_print"
+
+    dimensions:
+      subject: "cute ghost character riding skateboard"
+      aesthetic: "kawaii illustration, soft rounded shapes"
+      color: "pastel purple body, mint accents, white highlights"
+      composition: "centered with motion lines"
+      background: "transparent/none"
+      lighting: "soft, even"
+      texture: "clean outlines, flat color fills"
+      mood: "playful, friendly, halloween-cute"
+      pose: "riding skateboard, slight tilt"
+      expression: "happy, peaceful closed eyes"
+
+    technical:
+      color_separation: "5-color spot: pastel purple, mint, white, black outline, light gray"
+      shading: "stippled shading, no gradients"
+      line_weight: "0.75pt outlines"
+      notes: "white underbase for dark hoodies"
+
+  # ---------------------------------------------------------------------------
+  # TROPICAL BOTANICAL (Phone Case - UV Print)
+  # ---------------------------------------------------------------------------
+  tropical_botanical:
+    product_types: ["phone_case", "journal"]
+    print_method: "uv_print"
+
+    dimensions:
+      subject: "monstera leaves, overlapping tropical foliage"
+      aesthetic: "botanical illustration, detailed veins, luxury feel"
+      color: "deep emerald green, metallic gold vein accents"
+      composition: "vertical cascade, edge-to-edge coverage"
+      background: "dark forest green or transparent"
+      lighting: "subtle highlights on leaf surfaces"
+      texture: "organic leaf texture, gold metallic effect"
+      mood: "fresh, luxurious, nature-inspired"
+
+    technical:
+      dpi: "300 DPI"
+      finish: "optimized for glossy UV finish"
+      contrast: "high contrast for surface sharpness"
+      protected_areas: "camera cutout zone clear of key details"
+      wrap: "seamless edge wrapping for 3D case"
+
+  # ---------------------------------------------------------------------------
+  # COZY CAT (Mug - Sublimation)
+  # ---------------------------------------------------------------------------
+  cozy_cat:
+    product_types: ["mug_11oz", "tumbler"]
+    print_method: "sublimation"
+
+    dimensions:
+      subject: "sleeping cat in tiny sweater, curled up contentedly"
+      aesthetic: "kawaii illustration, soft warm style"
+      color: "burnt orange, cream, warm brown, dusty pink accents"
+      composition: "horizontal wrap, centered main subject"
+      background: "soft cream with subtle autumn elements"
+      lighting: "warm ambient glow"
+      texture: "soft edges, cozy fabric feel"
+      mood: "cozy, heartwarming, hygge comfort"
+      pose: "curled up sleeping position"
+      expression: "peaceful, content, eyes closed"
+
+    technical:
+      wrap: "9x3.5 inch seamless horizontal, left connects to right"
+      bleed: "0.125 inch bleed all sides"
+      safe_zone: "key elements away from handle zone"
+      dpi: "300 DPI for ceramic sublimation"
+
+  # ---------------------------------------------------------------------------
+  # VINTAGE CAMPING (Patch - Embroidery)
+  # ---------------------------------------------------------------------------
+  vintage_camping:
+    product_types: ["patch", "hat"]
+    print_method: "embroidery"
+
+    dimensions:
+      subject: "tent with pine trees and distant mountains"
+      aesthetic: "vintage national park badge, retro outdoor"
+      color: "forest green, warm brown, cream, sky blue, black outline"
+      composition: "circular badge format with border"
+      background: "cream or sky blue fill"
+      lighting: "flat, iconic style"
+      texture: "simplified shapes, clean edges for thread"
+      mood: "nostalgic, adventurous, authentic outdoors"
+
+    technical:
+      thread_colors: "5 thread colors: forest green, brown, cream, sky blue, black"
+      stitch_types: "satin stitch 3mm outlines, fill stitch interiors, running stitch texture"
+      min_detail: "all elements minimum 2mm for clean thread definition"
+      size: "3.5 inch diameter"
+      edge_finish: "merrowed edge"
+      notes: "simplified shapes for stitch clarity"
+
+  # ---------------------------------------------------------------------------
+  # COSMIC ASTRONAUT (Poster - Giclée)
+  # ---------------------------------------------------------------------------
+  cosmic_astronaut:
+    product_types: ["poster_18x24", "canvas_16x20"]
+    print_method: "giclee"
+
+    dimensions:
+      subject: "astronaut floating through nebula clouds"
+      aesthetic: "surreal space art, painterly atmosphere"
+      color: "deep purple, electric teal, coral pink, cosmic gradients"
+      composition: "portrait orientation, figure in upper 2/3, typography zone bottom"
+      background: "rich nebula with star field"
+      lighting: "ambient cosmic glow, rim light on suit"
+      texture: "painterly brushwork, atmospheric depth"
+      mood: "dreamlike, contemplative, vast solitude"
+      pose: "floating weightless, serene drift"
+      art_movement: "surrealism meets sci-fi illustration"
+
+    technical:
+      dpi: "300 DPI"
+      pixels: "5400x7200 for 18x24 inch"
+      color_profile: "sRGB for accurate giclée reproduction"
+      bleed: "2 inch margin for matting/framing"
+      typography_zone: "bottom 4 inches reserved"
+      notes: "archival quality, rich gradient depth"
+
+  # ---------------------------------------------------------------------------
+  # RETRO ARCADE (Apparel - DTG)
+  # ---------------------------------------------------------------------------
+  retro_arcade:
+    product_types: ["mens_tshirt", "womens_tshirt"]
+    print_method: "dtg"
+
+    dimensions:
+      subject: "pixel art arcade icons, joysticks, game characters"
+      aesthetic: "8-bit retro gaming, vintage arcade"
+      color: "neon pink, electric blue, bright green, black"
+      composition: "centered badge or scattered elements"
+      background: "dark/black or transparent"
+      lighting: "neon glow effects"
+      texture: "crisp pixel edges, CRT screen feel"
+      mood: "nostalgic, energetic, playful"
+      reference_style: "80s arcade aesthetic"
+
+    technical:
+      color_mode: "full color CMYK"
+      detail: "crisp pixel edges preserved"
+      gradients: "neon glow gradients allowed"
+
+  # ---------------------------------------------------------------------------
+  # FLORAL MANDALA (Women's Apparel - DTG)
+  # ---------------------------------------------------------------------------
+  floral_mandala:
+    product_types: ["womens_tshirt", "tank_top"]
+    print_method: "dtg"
+
+    dimensions:
+      subject: "intricate floral mandala pattern"
+      aesthetic: "bohemian, feminine, detailed symmetry"
+      color: "blush pink, gold accents, soft coral"
+      composition: "centered symmetrical, fills print area"
+      background: "transparent or soft white"
+      lighting: "soft, even illumination"
+      texture: "delicate line work, subtle watercolor touches"
+      mood: "serene, feminine, spiritual"
+      art_movement: "contemporary boho"
+
+    technical:
+      color_mode: "full color with metallic gold simulation"
+      detail: "fine line details preserved at 300 DPI"
+
+  # ---------------------------------------------------------------------------
+  # MARBLE LUXURY (Accessories - UV Print)
+  # ---------------------------------------------------------------------------
+  marble_luxury:
+    product_types: ["phone_case", "journal"]
+    print_method: "uv_print"
+
+    dimensions:
+      subject: "natural marble texture with veins"
+      aesthetic: "luxury minimalist, elegant stone"
+      color: "soft gray base, white veins, gold accent veins"
+      composition: "organic vein flow, edge-to-edge"
+      background: "marble texture throughout"
+      lighting: "subtle surface sheen"
+      texture: "polished stone, organic patterns"
+      mood: "sophisticated, timeless, premium"
+
+    technical:
+      finish: "high gloss UV for stone effect"
+      contrast: "defined veins against base"
+      coverage: "full surface seamless"
+
+  # ---------------------------------------------------------------------------
+  # GEOMETRIC PATTERN (AOP - Sublimation)
+  # ---------------------------------------------------------------------------
+  geometric_modern:
+    product_types: ["socks", "leggings", "aop_hoodie"]
+    print_method: "sublimation"
+
+    dimensions:
+      subject: "abstract geometric shapes, triangles and lines"
+      aesthetic: "modern minimalist, clean geometry"
+      color: "navy, coral, white, gray"
+      composition: "seamless tileable repeat"
+      background: "integrated pattern, no distinct bg"
+      lighting: "flat, graphic"
+      texture: "crisp edges, clean shapes"
+      mood: "contemporary, dynamic, athletic"
+      art_movement: "bauhaus influence"
+
+    technical:
+      repeat: "seamless tileable pattern"
+      dpi: "150 DPI for large format AOP"
+      stretch: "pattern holds on stretch fabrics"
+
+# =============================================================================
+# SCENARIO TEMPLATES
+# =============================================================================
+
+scenarios:
+  new_image:
+    template: "{assembled_dimensions}"
+    requires_reference: false
+
+  reference_based:
+    template: "Following the reference style for {preserve_aspects}, {assembled_dimensions}"
+    requires_reference: true
+    fields:
+      preserve_aspects: "what to keep from reference"
+      adapt_aspects: "what to change"
+
+  partial_edit:
+    template: "In the masked area, {edit_action}, matching {match_aspects}"
+    requires_reference: true
+    requires_mask: true
+    fields:
+      edit_action: "what to add/replace"
+      match_aspects: "what to match from existing"
+
+# =============================================================================
+# CONFLICT RESOLUTION
+# =============================================================================
+
+conflicts:
+  gradient_on_screen_print:
+    detect: "gradient requested + print_method == screen_print"
+    resolve:
+      texture: "halftone dot shading"
+      technical.shading: "halftone dots, no smooth gradients"
+
+  gradient_on_embroidery:
+    detect: "gradient requested + print_method == embroidery"
+    resolve:
+      texture: "stippled fill stitch"
+      technical.shading: "stippled thread transition"
+
+  fine_detail_embroidery:
+    detect: "detail_level == high + print_method == embroidery"
+    resolve:
+      detail_level: "simplified shapes"
+      technical.min_detail: "minimum 2mm"
+
+  too_many_colors_screen:
+    detect: "color count > 6 + print_method == screen_print"
+    resolve: "reduce to 6 spot colors with similar visual effect"
+
+  too_many_colors_embroidery:
+    detect: "color count > 12 + print_method == embroidery"
+    resolve: "reduce to 12 thread colors"
+
+# =============================================================================
+# LIBRARY MANAGEMENT
+# =============================================================================
+
+management:
+  extensible: true
+  add_example_requires: ["subject", "aesthetic", "color"]
+  feedback_fields: ["quality", "success_rate", "mode_fit"]
