@@ -63,39 +63,20 @@ async def check_openai_api() -> Dict[str, Any]:
         return {"status": False, "error": str(e)}
 
 
-async def check_flux_api() -> Dict[str, Any]:
-    """Check if Flux API is accessible."""
+async def check_runware_api() -> Dict[str, Any]:
+    """Check if Runware API key is configured (used for image generation)."""
     try:
-        if not settings.flux_api_key or settings.flux_api_key == "":
+        if not settings.runware_api_key or settings.runware_api_key == "":
             return {"status": False, "error": "API key not configured"}
 
-        if len(settings.flux_api_key) < 10:
+        if len(settings.runware_api_key) < 10:
             return {"status": False, "error": "API key appears invalid"}
 
-        # Make a lightweight API call to verify the key
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{settings.flux_api_endpoint}/health",
-                    headers={"Authorization": f"Bearer {settings.flux_api_key}"},
-                    timeout=5.0
-                )
-
-                if response.status_code in [200, 404]:  # 404 is ok if no health endpoint
-                    return {"status": True, "message": "API accessible"}
-                elif response.status_code == 401:
-                    return {"status": False, "error": "Invalid API key"}
-                else:
-                    # If health endpoint doesn't exist, key is likely still valid
-                    return {"status": True, "message": "API key configured"}
-            except httpx.TimeoutException:
-                return {"status": False, "error": "Request timeout"}
-            except Exception as e:
-                # Some APIs don't have health endpoints, so this might be ok
-                return {"status": True, "message": "API key configured (endpoint unreachable)"}
+        # Runware uses WebSocket, just check key is configured
+        return {"status": True, "message": "API key configured"}
 
     except Exception as e:
-        logger.error(f"Flux health check failed: {e}")
+        logger.error(f"Runware health check failed: {e}")
         return {"status": False, "error": str(e)}
 
 
@@ -147,7 +128,7 @@ async def perform_health_checks() -> Dict[str, Dict[str, Any]]:
     results = await asyncio.gather(
         check_gemini_api(),
         check_openai_api(),
-        check_flux_api(),
+        check_runware_api(),
         check_product_generator(),
         check_database(),
         return_exceptions=True
@@ -157,7 +138,7 @@ async def perform_health_checks() -> Dict[str, Dict[str, Any]]:
     checks = {
         "gemini_api": results[0] if not isinstance(results[0], Exception) else {"status": False, "error": str(results[0])},
         "openai_api": results[1] if not isinstance(results[1], Exception) else {"status": False, "error": str(results[1])},
-        "flux_api": results[2] if not isinstance(results[2], Exception) else {"status": False, "error": str(results[2])},
+        "runware_api": results[2] if not isinstance(results[2], Exception) else {"status": False, "error": str(results[2])},
         "product_generator": results[3] if not isinstance(results[3], Exception) else {"status": False, "error": str(results[3])},
         "database": results[4] if not isinstance(results[4], Exception) else {"status": False, "error": str(results[4])},
     }
