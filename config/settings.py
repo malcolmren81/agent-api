@@ -48,8 +48,11 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4o", description="OpenAI model")
     openai_org_id: str = Field(default="", description="OpenAI organization ID")
 
+    # Runware API (Image Generation)
+    runware_api_key: str = Field(default="", description="Runware API key for image generation")
+
     # Flux 1 Kontext API
-    flux_api_key: str = Field(description="Flux API key")
+    flux_api_key: str = Field(default="", description="Flux API key")
     flux_api_endpoint: str = Field(
         default="https://api.bfl.ai/v1", description="Flux API endpoint"
     )
