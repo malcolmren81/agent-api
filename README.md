@@ -1,198 +1,216 @@
-# Agents API - AI Orchestration Service
+# Palet8 Agents API
 
-The Agents API orchestrates multi-agent workflows for AI-powered image generation using Gemini 2.0 Flash, GPT-4o, Flux 1 Kontext, and Imagen 3.
+Multi-agent orchestration service for AI-powered design generation. Transforms user design requests into production-ready product images through intelligent agent coordination.
 
 ## Overview
 
-- **Service Name**: palet8-agents
-- **Routes**: `/agents/*`
-- **Tech Stack**: Python, FastAPI
-- **Port**: 8000
-- **Platform**: Google Cloud Run
-
-## Features
-
-- Multi-agent workflow orchestration
-- Intelligent model selection (Gemini vs GPT-4o)
-- Dual image generation (Flux 1 Kontext + Imagen 3)
-- Cost-performance optimization
-- Automatic fallback handling
-- Prompt management and refinement
+| | |
+|---|---|
+| **Service** | palet8-agents |
+| **Routes** | `/agents/*` |
+| **Stack** | Python, FastAPI, Prisma |
+| **Port** | 8000 |
+| **Platform** | Google Cloud Run |
 
 ## Architecture
 
-The service uses a multi-agent architecture:
+```
+User Request
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│  PALI AGENT - Conversational requirement gathering          │
+│  • Multi-turn chat with users                               │
+│  • UI selector integration (template, aesthetic, character) │
+│  • Requirements validation & completeness tracking          │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│  PLANNER AGENT - Central decision making                    │
+│  • Context evaluation & RAG (user history, art library)     │
+│  • Prompt mode selection (RELAX/STANDARD/COMPLEX)           │
+│  • Model selection based on capability/cost analysis        │
+│  • Safety classification                                    │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│  IMAGE GENERATION                                           │
+│  • Primary: Flux Pro 1.1 (fast, cost-effective)             │
+│  • Fallback: Imagen 3 (photorealistic)                      │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│  EVALUATOR AGENT - Quality gates                            │
+│  • Prompt quality assessment (before generation)            │
+│  • Result quality scoring (after generation)                │
+│  • Approval/rejection decisions                             │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│  SAFETY AGENT - Continuous monitoring (non-blocking)        │
+│  • NSFW, violence, hate speech detection                    │
+│  • IP/trademark violation checks                            │
+│  • Risk categorization & recommendations                    │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+Approved Image + Metadata
+```
 
-1. **Planner Agent** - Analyzes requests and creates execution plans
-2. **Prompt Manager Agent** - Refines and optimizes prompts
-3. **Model Selection Agent** - Chooses optimal AI models
-4. **Generation Agent** - Executes image generation
-5. **Evaluation Agent** - Scores and ranks generated images
-6. **Refinement Agent** - Improves results based on feedback
+## Agents
+
+### Pali Agent
+User-facing design assistant that gathers requirements through conversation.
+- Collects: subject, style, colors, mood, composition, elements
+- Integrates with UI selectors (product category, template, aesthetic)
+- Tracks requirement completeness with scoring
+
+### Planner Agent
+Central decision-maker that orchestrates the generation pipeline.
+- Evaluates context and performs RAG lookups
+- Selects prompt mode and image dimensions
+- Chooses optimal model based on complexity and cost
+- Creates execution plan for downstream services
+
+### Evaluator Agent
+Quality gate that ensures output meets standards.
+- **Pre-generation**: Validates prompt clarity, coverage, product constraints
+- **Post-generation**: Scores prompt fidelity, technical quality, aesthetics
+- Approves, requests fixes, or rejects outputs
+
+### Safety Agent
+Continuous content safety monitor.
+- Risk categories: NSFW, violence, hate, IP violations, illegal content
+- Severity levels: none → low → medium → high → critical
+- Context-aware evaluation (understands negative prompts)
+- Non-blocking by default, escalates when necessary
+
+## API Endpoints
+
+### Chat API
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/chat/start` | POST | Start conversation with Pali agent |
+| `/chat/message` | POST | Send message, receive SSE stream |
+| `/chat/history/{id}` | GET | Get conversation history |
+| `/chat/generate` | POST | Trigger full generation pipeline |
+
+### Health & Monitoring
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Service health with component status |
+| `/metrics` | GET | Prometheus metrics |
+
+### Workflow & Logs
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/workflow/{task_id}` | GET | Get complete workflow data |
+| `/api/agent-logs` | GET | Query agent execution logs |
+| `/api/tasks` | GET | Task query and status |
+
+## AI Models
+
+All model calls go through unified API providers (no direct model integrations):
+
+### Reasoning (via OpenRouter)
+- Gemini 2.0 Flash, GPT-4o, Claude, and other models
+- Automatic routing and fallback handling
+
+### Image Generation (via Runware)
+- Flux Pro 1.1, SDXL, and other models
+- Unified image generation API
+
+### Embeddings (direct)
+- Only embedding calls use direct API integration
 
 ## Local Development
 
 ### Prerequisites
-
-- Python 3.10+
-- Google Cloud credentials (for Gemini/Imagen 3)
-- OpenAI API key (for GPT-4o)
-- Flux API key
+- Python 3.11+
+- Node.js 20+ (for Prisma)
+- API keys: OPENROUTER_API_KEY, FLUX_API_KEY
 
 ### Setup
+```bash
+# Install dependencies
+pip install -r requirements.txt
 
-1. **Install dependencies**
-   ```bash
-   cd services/agents-api
-   pip install -r requirements.txt
-   ```
+# Setup database
+prisma generate
+prisma db push
 
-2. **Configure environment variables**
-   ```bash
-   cp .env.example .env
-   ```
+# Configure environment
+cp .env.example .env
+# Edit .env with your API keys
 
-   Edit `.env`:
-   ```env
-   GEMINI_API_KEY=your_gemini_key
-   OPENAI_API_KEY=your_openai_key
-   FLUX_API_KEY=your_flux_key
-   PYTHONUNBUFFERED=1
-   ```
-
-3. **Run development server**
-   ```bash
-   uvicorn src.main:app --reload --port 8000
-   ```
-
-   Server will start at `http://localhost:8000`
+# Run server
+uvicorn src.api.main:app --reload --port 8000
+```
 
 ## Deployment
 
-Deploy to Google Cloud Run:
-
 ```bash
-cd services/agents-api
-
 gcloud run deploy palet8-agents \
   --source . \
-  --region=us-central1 \
-  --platform=managed \
+  --region us-central1 \
   --allow-unauthenticated \
-  --port=8000 \
-  --memory=2Gi \
-  --cpu=2 \
-  --max-instances=10 \
-  --timeout=300s \
-  --set-env-vars="PYTHONUNBUFFERED=1" \
-  --set-secrets="GEMINI_API_KEY=gemini-api-key:latest,FLUX_API_KEY=flux-api-key:latest,OPENAI_API_KEY=openai-api-key:latest"
+  --memory 4Gi \
+  --cpu 2 \
+  --timeout 300 \
+  --set-secrets="OPENROUTER_API_KEY=openrouter-api-key:latest,FLUX_API_KEY=flux-api-key:latest"
 ```
 
-## API Endpoints
+## Project Structure
 
-### Health Check
 ```
-GET /agents/health
-Response: { "status": "healthy", "agents": [...] }
+agents-api/
+├── palet8_agents/              # Core agent system
+│   ├── agents/                 # Agent implementations
+│   │   ├── pali_agent.py       # Requirement gathering
+│   │   ├── planner_agent.py    # Decision making
+│   │   ├── evaluator_agent.py  # Quality gates
+│   │   └── safety_agent.py     # Safety monitoring
+│   ├── core/                   # Framework (BaseAgent, Context, Message)
+│   ├── services/               # LLM, embedding, prompt services
+│   └── tools/                  # Agent tools (search, image, context)
+├── src/
+│   ├── api/
+│   │   ├── main.py             # FastAPI app
+│   │   ├── websocket.py        # Real-time updates
+│   │   └── routes/             # API endpoints
+│   │       ├── chat.py         # Chat API (Pali integration)
+│   │       ├── workflow.py     # Workflow tracking
+│   │       └── agent_logs.py   # Execution logs
+│   ├── database/               # Prisma client
+│   ├── models/                 # Pydantic schemas
+│   └── utils/                  # Logger, metrics, health check
+├── prisma/
+│   └── schema.prisma           # Database schema
+├── config/                     # YAML configs (safety, evaluation, models)
+├── docs/archive/               # Archived old code
+├── Dockerfile
+└── requirements.txt
 ```
 
-### Image Generation
-```
-POST /agents/v1/generate
-Request: {
-  "prompt": "Design description",
-  "style": "modern",
-  "num_images": 2
-}
-Response: {
-  "success": true,
-  "images": [...],
-  "metadata": {...}
-}
-```
+## Database Models
 
-### Workflow Execution
-```
-POST /agents/v1/workflow
-Executes full multi-agent workflow
-```
+- **Conversation** - Multi-turn chat sessions
+- **ChatMessage** - Conversation history
+- **Job** - Agent task execution (status, requirements, plan, evaluation)
+- **AgentLog** - Per-agent execution tracking
+- **Task** - Full pipeline logs with performance metrics
 
 ## Environment Variables
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `GEMINI_API_KEY` | Google Gemini API key | Yes |
-| `OPENAI_API_KEY` | OpenAI API key | Yes |
-| `FLUX_API_KEY` | Flux API key | Yes |
-| `PYTHONUNBUFFERED` | Python output buffering | No |
+| `OPENROUTER_API_KEY` | OpenRouter API key (Gemini, GPT-4o) | Yes |
+| `FLUX_API_KEY` | Black Forest Labs Flux API | Yes |
+| `DATABASE_URL` | PostgreSQL connection string | Yes |
+| `RUNWARE_API_KEY` | Runware image API | Optional |
 
-## Project Structure
+## Key Features
 
-```
-services/agents-api/
-├── src/
-│   ├── agents/              # Agent implementations
-│   │   ├── planner_agent.py
-│   │   ├── prompt_manager_agent.py
-│   │   ├── model_selection_agent.py
-│   │   ├── generation_agent.py
-│   │   ├── evaluation_agent.py
-│   │   └── refinement_agent.py
-│   ├── connectors/          # AI model connectors
-│   │   ├── gemini_reasoning.py
-│   │   ├── chatgpt_reasoning.py
-│   │   ├── flux_image.py
-│   │   └── gemini_image.py
-│   ├── models/              # Data models
-│   │   └── schemas.py
-│   ├── orchestrator.py      # Workflow orchestration
-│   ├── main.py             # FastAPI app
-│   └── utils.py            # Utilities
-├── requirements.txt
-└── README.md              # This file
-```
-
-## AI Models
-
-### Reasoning Models
-- **Gemini 2.0 Flash**: 33x cheaper, 1M context window, thinking budget
-- **GPT-4o**: Advanced reasoning, code generation
-
-### Image Generation Models
-- **Flux 1 Kontext**: 8x faster inference, excellent style transfer
-- **Imagen 3**: Superior photorealism, multi-image blending
-
-## Cost Optimization
-
-The Model Selection Agent automatically chooses the most cost-effective model based on:
-- Task complexity
-- Required features
-- Performance requirements
-- Cost constraints
-
-Default strategy: Gemini 2.0 Flash for reasoning, Flux for images.
-
-## Error Handling
-
-Automatic fallback to alternative models on failure:
-- If Flux fails → Falls back to Imagen 3
-- If Gemini fails → Falls back to GPT-4o
-
-## Monitoring
-
-Key metrics to monitor:
-- Agent execution time
-- Model selection rationale
-- Generation success rate
-- Cost per request
-- API latency
-
-## Related Documentation
-
-- [Main README](../../README.md)
-- [Routing Architecture](../../docs/architecture/routing.md)
-- [Agent Implementation Details](src/agents/)
-
-## Support
-
-For issues specific to the Agents API, create an issue on GitHub.
+- **Cost Optimization**: Automatic model selection balances quality, speed, and cost
+- **Quality Gates**: Multi-dimensional evaluation before and after generation
+- **Safety First**: Continuous content monitoring without blocking workflow
+- **Observability**: Full execution logging with performance metrics
+- **Fallback Handling**: Automatic model switching on failures
