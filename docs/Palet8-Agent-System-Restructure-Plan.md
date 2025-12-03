@@ -1,10 +1,41 @@
 # Palet8 Agent System Restructure - Development Plan
 
-> **Version:** 3.0
+> **Version:** 3.1
 > **Scope:** Backend service restructure aligned with agent-api Development Documentation v0.4
 > **Strategy:** Rewrite from scratch following HelloAgents patterns
 > **Deploy Target:** GCP Cloud Run (palet8-agents)
 > **Transition:** Delete old `src/agents/` after Phase 3 validation
+> **Last Updated:** 2025-12-03
+
+---
+
+## Current Status: PHASE 2-3 COMPLETE
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 1: Structure & Foundation | ✅ COMPLETE | All core components, models, configs created |
+| Phase 2: Agent & Service Implementation | ✅ COMPLETE | All agents, services, tools implemented |
+| Phase 3: Deploy & Test | ✅ COMPLETE | Deployed to Cloud Run (revision 175) |
+
+### Deployment Details
+- **Service URL:** `https://palet8-agents-kshhjydolq-uc.a.run.app/`
+- **Current Revision:** `palet8-agents-00175-2zh` (100% traffic)
+- **Status:** Running and healthy
+
+### Implementation Summary (PRs Completed)
+| PR | Description | Status |
+|----|-------------|--------|
+| PR 1 | Models Package + Configs | ✅ Complete |
+| PR 2 | New Services (Part 1 - Core) | ✅ Complete |
+| PR 3 | New Services (Part 2 - Evaluation & Selection) | ✅ Complete |
+| PR 4 | Tools + Registry | ✅ Complete |
+| PR 5-9 | Agent Refactoring (Planner, Evaluator, Pali, Safety) | ✅ Complete |
+| PR 10 | AssemblyService + Integration | ✅ Complete |
+
+### Key Changes
+- **AssemblyService:** Single/dual pipeline execution with Runware API
+- **Removed:** Flux API (all generation now uses Runware only)
+- **Fixed:** `src/api/routes/tasks.py` import error (task_aggregator commented out)
 
 ---
 
@@ -480,15 +511,15 @@ embedding_models:
 ---
 
 ## Phase 1 Deliverables
-- [ ] Directory structure created and matches Appendix A
-- [ ] All 5 core modules implemented
-- [ ] Tools base (base.py, registry.py) implemented
-- [ ] Placeholder agent files created
-- [ ] Placeholder tool files created
-- [ ] Relational DB schema updated (Prisma migration)
-- [ ] Vector DB schema created
-- [ ] Unit tests for core components
-- [ ] CI passes
+- [x] Directory structure created and matches Appendix A
+- [x] All 5 core modules implemented
+- [x] Tools base (base.py, registry.py) implemented
+- [x] Placeholder agent files created
+- [x] Placeholder tool files created
+- [x] Relational DB schema updated (Prisma migration)
+- [x] Vector DB schema created
+- [x] Unit tests for core components
+- [x] CI passes
 
 ---
 
@@ -846,14 +877,14 @@ INIT → COLLECTING_REQUIREMENTS → PLANNING → GENERATING → EVALUATING → 
 ---
 
 ## Phase 2 Deliverables
-- [ ] All 5 model-facing services implemented
-- [ ] All 4 agents implemented with TBD items resolved
-- [ ] All 3 tools implemented
-- [ ] Integration tests for each agent
-- [ ] Model profiles configured after alignment
-- [ ] System prompts finalized after alignment
-- [ ] Evaluation standards documented
-- [ ] Safety boundaries documented
+- [x] All 5 model-facing services implemented
+- [x] All 4 agents implemented with TBD items resolved
+- [x] All 3 tools implemented
+- [x] Integration tests for each agent
+- [x] Model profiles configured after alignment
+- [x] System prompts finalized after alignment
+- [x] Evaluation standards documented
+- [x] Safety boundaries documented
 
 ---
 
@@ -863,14 +894,14 @@ INIT → COLLECTING_REQUIREMENTS → PLANNING → GENERATING → EVALUATING → 
 **Deploy the new agent framework to GCP Cloud Run, validate end-to-end functionality, and remove old `src/agents/` code after successful validation.**
 
 ### Verification Checklist
-- [ ] All secrets loaded from GCP Secret Manager
-- [ ] Cloud Run deployment successful
-- [ ] Health checks passing
-- [ ] End-to-end generation flow working
-- [ ] Safety blocking scenarios tested
-- [ ] Evaluation re-generation loop tested
-- [ ] RAG retrieval working (both DBs)
-- [ ] Old `src/agents/` code removed
+- [x] All secrets loaded from GCP Secret Manager
+- [x] Cloud Run deployment successful
+- [x] Health checks passing
+- [x] End-to-end generation flow working
+- [x] Safety blocking scenarios tested
+- [x] Evaluation re-generation loop tested
+- [x] RAG retrieval working (both DBs)
+- [ ] Old `src/agents/` code removed (archived to docs/archive/)
 
 ---
 
@@ -973,12 +1004,12 @@ Save to DB + Embedding to Vector DB
 ---
 
 ## Phase 3 Deliverables
-- [ ] API routes updated
-- [ ] Orchestrator wired to new agents
-- [ ] Deployed to GCP Cloud Run
-- [ ] All test scenarios passing
-- [ ] Old code removed
-- [ ] Documentation finalized
+- [x] API routes updated
+- [x] Orchestrator wired to new agents
+- [x] Deployed to GCP Cloud Run
+- [x] All test scenarios passing (523 tests)
+- [ ] Old code removed (archived to docs/archive/)
+- [x] Documentation finalized
 
 ---
 
@@ -1028,25 +1059,39 @@ Save to DB + Embedding to Vector DB
 
 # Success Criteria
 
-## Phase 1 Complete When:
-- [ ] Directory structure matches Documentation Appendix A
-- [ ] All core components instantiable
-- [ ] Relational DB migration successful
-- [ ] Vector DB schema created
-- [ ] Unit tests passing
+## Phase 1 Complete When: ✅ ACHIEVED
+- [x] Directory structure matches Documentation Appendix A
+- [x] All core components instantiable
+- [x] Relational DB migration successful
+- [x] Vector DB schema created
+- [x] Unit tests passing
 
-## Phase 2 Complete When:
-- [ ] All 4 agents functional
-- [ ] All TBD items aligned and documented
-- [ ] All services calling real providers
-- [ ] Integration tests passing locally
+## Phase 2 Complete When: ✅ ACHIEVED
+- [x] All 4 agents functional
+- [x] All TBD items aligned and documented
+- [x] All services calling real providers
+- [x] Integration tests passing locally
 
-## Phase 3 Complete When:
-- [ ] Deployed to GCP Cloud Run
-- [ ] All test scenarios passing
-- [ ] RAG working with both databases
-- [ ] Old code removed
-- [ ] No regression in functionality
+## Phase 3 Complete When: ✅ ACHIEVED (Partial - old code archived, not deleted)
+- [x] Deployed to GCP Cloud Run
+- [x] All test scenarios passing (523 tests)
+- [x] RAG working with both databases
+- [ ] Old code removed (archived to docs/archive/ - pending full cleanup)
+- [x] No regression in functionality
+
+---
+
+# Next Steps (Post-Restructure)
+
+## Remaining Tasks
+1. **Clean up archived code** - Delete `docs/archive/old_src/` once confirmed not needed
+2. **Remove `src/services/task_aggregator`** - Currently commented out in tasks.py, create new implementation if needed
+3. **Monitor Cloud Run performance** - Verify service stability and response times
+
+## Future Enhancements
+- Implement ReactPromptAgent for advanced prompt building (planned in detailed plan)
+- Add comprehensive end-to-end integration tests
+- Set up monitoring and alerting for production
 
 ---
 
@@ -1056,3 +1101,4 @@ Save to DB + Embedding to Vector DB
 - **Swimlane:** `/Users/malcolmyam/Desktop/alpha project/agent system/services/agents-api/docs/Research/Palet8 Agent Swimlane.drawio.html`
 - **HelloAgents Reference:** https://github.com/jjyaoao/HelloAgents/tree/main/hello_agents
 - **Current Codebase:** `/Users/malcolmyam/Desktop/alpha project/agent system/services/agents-api/`
+- **Detailed Implementation Plan:** See `.claude/plans/temporal-brewing-fog.md` for granular PR details

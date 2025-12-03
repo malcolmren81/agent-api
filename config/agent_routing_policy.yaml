@@ -29,6 +29,15 @@ model_profiles:
     cost_per_1k_input: 0.001     # $1.00/1M
     cost_per_1k_output: 0.005    # $5.00/1M
 
+  react_prompt:
+    # ReAct prompt building agent - same as planner for consistent quality
+    primary_model: "anthropic/claude-haiku-4.5"
+    fallback_model: "moonshotai/kimi-k2-thinking"
+    temperature: 0.3
+    max_tokens: 2000
+    cost_per_1k_input: 0.001     # $1.00/1M
+    cost_per_1k_output: 0.005    # $5.00/1M
+
   evaluator:
     # Vision + reasoning - evaluates images and prompts
     primary_model: "alibaba/qwen3-vl-30b-a3b-instruct"

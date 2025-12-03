@@ -16,6 +16,9 @@ from palet8_agents.core.exceptions import (
     ToolError,
 )
 
+# Models package - shared data classes and enums
+from palet8_agents import models
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -37,4 +40,6 @@ __all__ = [
     "AgentExecutionError",
     "LLMClientError",
     "ToolError",
+    # Models package
+    "models",
 ]

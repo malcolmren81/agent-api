@@ -1,0 +1,121 @@
+# =============================================================================
+# Result Quality Evaluation Configuration
+# =============================================================================
+# Configuration for assessing generated image quality.
+# Weights and thresholds vary by mode (RELAX/STANDARD/COMPLEX).
+# =============================================================================
+
+version: "1.0"
+
+# =============================================================================
+# Dimension Weights by Mode
+# =============================================================================
+# How much each dimension contributes to overall result quality score
+# =============================================================================
+weights:
+  RELAX:
+    prompt_fidelity: 0.25       # Matches prompt description
+    product_readiness: 0.30    # Ready for print/product
+    technical_quality: 0.20    # Resolution, sharpness
+    background_composition: 0.10  # Background handling
+    aesthetic: 0.10            # Visual appeal
+    text_legibility: 0.05      # Text clarity (if present)
+    set_consistency: 0.00      # Multi-image consistency (N/A for single)
+
+  STANDARD:
+    prompt_fidelity: 0.25
+    product_readiness: 0.20
+    technical_quality: 0.20
+    background_composition: 0.15
+    aesthetic: 0.15
+    text_legibility: 0.05
+    set_consistency: 0.00
+
+  COMPLEX:
+    prompt_fidelity: 0.22
+    product_readiness: 0.18
+    technical_quality: 0.18
+    background_composition: 0.17
+    aesthetic: 0.17
+    text_legibility: 0.05
+    set_consistency: 0.03
+
+# =============================================================================
+# Thresholds by Mode
+# =============================================================================
+# Minimum scores required for each dimension and overall
+# =============================================================================
+thresholds:
+  RELAX:
+    overall: 0.70
+    prompt_fidelity: 0.50
+    product_readiness: 0.60
+    technical_quality: 0.50
+    background_composition: 0.40
+    aesthetic: 0.40
+    text_legibility: 0.50
+    set_consistency: 0.0
+
+  STANDARD:
+    overall: 0.80
+    prompt_fidelity: 0.70
+    product_readiness: 0.70
+    technical_quality: 0.60
+    background_composition: 0.60
+    aesthetic: 0.60
+    text_legibility: 0.60
+    set_consistency: 0.0
+
+  COMPLEX:
+    overall: 0.85
+    prompt_fidelity: 0.80
+    product_readiness: 0.75
+    technical_quality: 0.75
+    background_composition: 0.70
+    aesthetic: 0.70
+    text_legibility: 0.70
+    set_consistency: 0.60
+
+# =============================================================================
+# Technical Quality Checks
+# =============================================================================
+quality_checks:
+  min_resolution: 1024         # Minimum resolution on longest side
+  min_coverage_percent: 0.8    # Minimum subject coverage of canvas
+  sharpness_threshold: 0.5     # Minimum sharpness score
+  noise_threshold: 0.3         # Maximum acceptable noise level
+
+# =============================================================================
+# Text Detection
+# =============================================================================
+# Keywords that indicate text content is expected in the image
+# =============================================================================
+text_detection_keywords:
+  - text
+  - logo
+  - typography
+  - lettering
+  - words
+  - title
+  - headline
+  - quote
+  - caption
+  - label
+
+# =============================================================================
+# Decision Outcomes
+# =============================================================================
+decisions:
+  APPROVE: "Result quality acceptable, show to user"
+  REJECT: "Result quality unacceptable, retry (COMPLEX mode only)"
+  POLICY_FAIL: "Result violates safety policy"
+
+# =============================================================================
+# Retry Behavior
+# =============================================================================
+retry:
+  enabled: true
+  max_attempts: 3
+  applicable_modes:
+    - COMPLEX              # Only COMPLEX mode can auto-retry
+  # RELAX and STANDARD always approve if safe (quality is internal only)

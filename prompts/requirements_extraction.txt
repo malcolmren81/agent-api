@@ -1,0 +1,33 @@
+Extract design requirements from the conversation as JSON.
+
+TASK
+Analyze the conversation history and extract any design requirements mentioned by the user.
+
+OUTPUT FORMAT
+Return ONLY valid JSON with these fields:
+{
+  "subject": "main subject or concept",
+  "style": "visual style",
+  "colors": ["list", "of", "colors"],
+  "mood": "emotional tone",
+  "composition": "composition notes",
+  "include_elements": ["elements", "to", "include"],
+  "avoid_elements": ["elements", "to", "avoid"],
+  "reference_image": "URL or description if provided",
+  "additional_notes": "any other relevant details"
+}
+
+GUIDELINES
+1. If a field is not mentioned, use null or empty array as appropriate
+2. Extract exact values when provided (e.g., specific colors named)
+3. Infer style from context when explicitly stated
+4. Include any negative instructions in avoid_elements
+5. Do not invent or assume information not present in conversation
+
+EXAMPLES
+
+Input: "I want a cute cat playing with yarn"
+Output: {"subject": "cute cat playing with yarn", "style": null, "colors": [], ...}
+
+Input: "Make me a vintage poster with warm colors, no text"
+Output: {"subject": "poster", "style": "vintage", "colors": ["warm colors"], "avoid_elements": ["text"], ...}

@@ -5,6 +5,8 @@ This agent handles quality evaluation using a two-phase approach:
 1. PROMPT QUALITY (create_plan) - Evaluate prompt BEFORE generation
 2. RESULT QUALITY (execute) - Evaluate image AFTER generation
 
+Refactored to use models package for data classes and delegate to evaluation services.
+
 Prompt Quality Dimensions:
 - coverage: Required dimensions present for product/mode
 - clarity: Self-consistent, no contradictions, no vague terms
@@ -26,8 +28,6 @@ Note: Safety checks are handled by SafetyAgent, not this evaluator.
 Documentation Reference: Section 5.2.3
 """
 
-from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Dict, List, Optional
 import logging
 import json
@@ -39,169 +39,34 @@ from palet8_agents.tools.base import BaseTool
 from palet8_agents.services.text_llm_service import TextLLMService
 from palet8_agents.services.reasoning_service import ReasoningService
 
+# Import from models package (refactored - no longer using inline classes)
+from palet8_agents.models import (
+    EvaluationPhase,
+    EvaluationDecision,
+    PromptQualityDimension,
+    ResultQualityDimension,
+    PromptQualityResult,
+    RetrySuggestion,
+    ResultQualityResult,
+    EvaluationPlan,
+)
+
+# Import new services (PR 2 & 3)
+from palet8_agents.services.prompt_evaluation_service import PromptEvaluationService
+from palet8_agents.services.result_evaluation_service import ResultEvaluationService
+
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# ENUMS & CONSTANTS
+# NOTE: Enums (EvaluationPhase, EvaluationDecision, PromptQualityDimension,
+# ResultQualityDimension) have been moved to palet8_agents.models package.
+# Import them from there for consistency.
+#
+# NOTE: Weights and thresholds (PROMPT_QUALITY_WEIGHTS, PROMPT_QUALITY_THRESHOLDS,
+# RESULT_QUALITY_WEIGHTS, RESULT_QUALITY_THRESHOLDS) have been moved to the
+# evaluation services. Use get_weights() and get_thresholds() methods.
 # =============================================================================
-
-class EvaluationPhase(Enum):
-    """Evaluation phases."""
-    CREATE_PLAN = "create_plan"  # Prompt quality - BEFORE generation
-    EXECUTE = "execute"          # Result quality - AFTER generation
-
-
-class EvaluationDecision(Enum):
-    """Evaluation decisions."""
-    PASS = "PASS"
-    FIX_REQUIRED = "FIX_REQUIRED"
-    APPROVE = "APPROVE"
-    REJECT = "REJECT"
-    POLICY_FAIL = "POLICY_FAIL"  # Hard block for safety violations
-
-
-class PromptQualityDimension(Enum):
-    """Prompt quality dimensions (Phase 1: create_plan)."""
-    COVERAGE = "coverage"                    # Required dimensions present
-    CLARITY = "clarity"                      # No contradictions/ambiguity
-    PRODUCT_CONSTRAINTS = "product_constraints"  # Print method alignment
-    STYLE_ALIGNMENT = "style_alignment"      # Brand/mode style match
-    CONTROL_SURFACE = "control_surface"      # Negative prompt quality
-
-
-class ResultQualityDimension(Enum):
-    """Result quality dimensions (Phase 2: execute)."""
-    PROMPT_FIDELITY = "prompt_fidelity"      # Image matches prompt
-    PRODUCT_READINESS = "product_readiness"  # Commercial asset ready
-    TECHNICAL_QUALITY = "technical_quality"  # Resolution, sharpness
-    BACKGROUND_COMPOSITION = "background_composition"  # Background/layout
-    AESTHETIC = "aesthetic"                  # Visual appeal
-    TEXT_LEGIBILITY = "text_legibility"      # Text/logos readable
-    SET_CONSISTENCY = "set_consistency"      # Multi-image consistency
-
-
-# =============================================================================
-# DIMENSION WEIGHTS BY MODE
-# =============================================================================
-
-# Prompt Quality weights per mode
-PROMPT_QUALITY_WEIGHTS = {
-    "RELAX": {
-        "coverage": 0.30,
-        "clarity": 0.25,
-        "product_constraints": 0.20,
-        "style_alignment": 0.10,
-        "control_surface": 0.15,
-    },
-    "STANDARD": {
-        "coverage": 0.25,
-        "clarity": 0.25,
-        "product_constraints": 0.20,
-        "style_alignment": 0.15,
-        "control_surface": 0.15,
-    },
-    "COMPLEX": {
-        "coverage": 0.22,
-        "clarity": 0.17,
-        "product_constraints": 0.22,
-        "style_alignment": 0.22,
-        "control_surface": 0.17,
-    },
-}
-
-# Prompt Quality thresholds per mode
-PROMPT_QUALITY_THRESHOLDS = {
-    "RELAX": {
-        "overall": 0.50,
-        "coverage": 0.50,
-        "clarity": 0.40,
-        "product_constraints": 0.40,
-        "style_alignment": 0.30,
-        "control_surface": 0.30,
-    },
-    "STANDARD": {
-        "overall": 0.70,
-        "coverage": 0.70,
-        "clarity": 0.60,
-        "product_constraints": 0.60,
-        "style_alignment": 0.50,
-        "control_surface": 0.50,
-    },
-    "COMPLEX": {
-        "overall": 0.85,
-        "coverage": 0.85,
-        "clarity": 0.75,
-        "product_constraints": 0.80,
-        "style_alignment": 0.70,
-        "control_surface": 0.70,
-    },
-}
-
-# Result Quality weights per mode
-RESULT_QUALITY_WEIGHTS = {
-    "RELAX": {
-        "prompt_fidelity": 0.25,
-        "product_readiness": 0.30,
-        "technical_quality": 0.20,
-        "background_composition": 0.10,
-        "aesthetic": 0.10,
-        "text_legibility": 0.05,
-        "set_consistency": 0.00,
-    },
-    "STANDARD": {
-        "prompt_fidelity": 0.25,
-        "product_readiness": 0.20,
-        "technical_quality": 0.20,
-        "background_composition": 0.15,
-        "aesthetic": 0.15,
-        "text_legibility": 0.05,
-        "set_consistency": 0.00,
-    },
-    "COMPLEX": {
-        "prompt_fidelity": 0.22,
-        "product_readiness": 0.18,
-        "technical_quality": 0.18,
-        "background_composition": 0.17,
-        "aesthetic": 0.17,
-        "text_legibility": 0.05,
-        "set_consistency": 0.03,
-    },
-}
-
-# Result Quality thresholds per mode
-RESULT_QUALITY_THRESHOLDS = {
-    "RELAX": {
-        "overall": 0.70,
-        "prompt_fidelity": 0.50,
-        "product_readiness": 0.60,
-        "technical_quality": 0.50,
-        "background_composition": 0.40,
-        "aesthetic": 0.40,
-        "text_legibility": 0.50,
-        "set_consistency": 0.0,
-    },
-    "STANDARD": {
-        "overall": 0.80,
-        "prompt_fidelity": 0.70,
-        "product_readiness": 0.70,
-        "technical_quality": 0.60,
-        "background_composition": 0.60,
-        "aesthetic": 0.60,
-        "text_legibility": 0.60,
-        "set_consistency": 0.0,
-    },
-    "COMPLEX": {
-        "overall": 0.85,
-        "prompt_fidelity": 0.80,
-        "product_readiness": 0.75,
-        "technical_quality": 0.75,
-        "background_composition": 0.70,
-        "aesthetic": 0.70,
-        "text_legibility": 0.70,
-        "set_consistency": 0.60,
-    },
-}
 
 
 # =============================================================================
@@ -261,106 +126,10 @@ Catch problems early without slowing the happy path."""
 
 
 # =============================================================================
-# DATA CLASSES
+# NOTE: Data classes (PromptQualityResult, RetrySuggestion, ResultQualityResult,
+# EvaluationPlan) have been moved to palet8_agents.models package.
+# Import them from there for consistency.
 # =============================================================================
-
-@dataclass
-class PromptQualityResult:
-    """Result from prompt quality evaluation (Phase 1)."""
-    overall: float
-    dimensions: Dict[str, float] = field(default_factory=dict)
-    mode: str = "STANDARD"
-    threshold: float = 0.70
-    decision: str = "PASS"  # PASS, FIX_REQUIRED, POLICY_FAIL
-    feedback: List[str] = field(default_factory=list)
-    failed_dimensions: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "overall": self.overall,
-            "dimensions": self.dimensions,
-            "mode": self.mode,
-            "threshold": self.threshold,
-            "decision": self.decision,
-            "feedback": self.feedback,
-            "failed_dimensions": self.failed_dimensions,
-            "metadata": self.metadata,
-        }
-
-
-@dataclass
-class RetrySuggestion:
-    """Suggestion for retrying a failed dimension."""
-    dimension: str
-    suggested_changes: List[str] = field(default_factory=list)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "dimension": self.dimension,
-            "suggested_changes": self.suggested_changes,
-        }
-
-
-@dataclass
-class ResultQualityResult:
-    """Result from result quality evaluation (Phase 2)."""
-    overall: float
-    dimensions: Dict[str, float] = field(default_factory=dict)
-    mode: str = "STANDARD"
-    threshold: float = 0.80
-    decision: str = "APPROVE"  # APPROVE, REJECT, POLICY_FAIL
-    feedback: List[str] = field(default_factory=list)
-    failed_dimensions: List[str] = field(default_factory=list)
-    retry_suggestions: List[RetrySuggestion] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "overall": self.overall,
-            "dimensions": self.dimensions,
-            "mode": self.mode,
-            "threshold": self.threshold,
-            "decision": self.decision,
-            "feedback": self.feedback,
-            "failed_dimensions": self.failed_dimensions,
-            "retry_suggestions": [s.to_dict() for s in self.retry_suggestions],
-            "metadata": self.metadata,
-        }
-
-
-@dataclass
-class EvaluationPlan:
-    """Evaluation plan created in Phase 1."""
-    job_id: str
-    prompt: str
-    negative_prompt: str = ""
-    mode: str = "STANDARD"
-    product_type: Optional[str] = None
-    print_method: Optional[str] = None
-    dimensions_requested: Dict[str, Any] = field(default_factory=dict)
-    prompt_quality: Optional[PromptQualityResult] = None
-    result_weights: Dict[str, float] = field(default_factory=dict)
-    result_thresholds: Dict[str, float] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "job_id": self.job_id,
-            "prompt": self.prompt,
-            "negative_prompt": self.negative_prompt,
-            "mode": self.mode,
-            "product_type": self.product_type,
-            "print_method": self.print_method,
-            "dimensions_requested": self.dimensions_requested,
-            "prompt_quality": self.prompt_quality.to_dict() if self.prompt_quality else None,
-            "result_weights": self.result_weights,
-            "result_thresholds": self.result_thresholds,
-            "metadata": self.metadata,
-        }
 
 
 # =============================================================================
@@ -387,8 +156,19 @@ class EvaluatorAgent(BaseAgent):
         tools: Optional[List[BaseTool]] = None,
         text_service: Optional[TextLLMService] = None,
         reasoning_service: Optional[ReasoningService] = None,
+        prompt_evaluation_service: Optional[PromptEvaluationService] = None,
+        result_evaluation_service: Optional[ResultEvaluationService] = None,
     ):
-        """Initialize the Evaluator Agent."""
+        """
+        Initialize the Evaluator Agent.
+
+        Args:
+            tools: Optional list of tools for the agent
+            text_service: Optional TextLLMService for text generation
+            reasoning_service: Optional ReasoningService for reasoning tasks
+            prompt_evaluation_service: Optional PromptEvaluationService for prompt quality
+            result_evaluation_service: Optional ResultEvaluationService for result quality
+        """
         super().__init__(
             name="evaluator",
             description="Quality evaluation agent for prompts and generated images",
@@ -397,9 +177,13 @@ class EvaluatorAgent(BaseAgent):
 
         self._text_service = text_service
         self._reasoning_service = reasoning_service
+        self._prompt_evaluation_service = prompt_evaluation_service
+        self._result_evaluation_service = result_evaluation_service
         self._owns_services = {
             "text": text_service is None,
             "reasoning": reasoning_service is None,
+            "prompt_evaluation": prompt_evaluation_service is None,
+            "result_evaluation": result_evaluation_service is None,
         }
 
         self.system_prompt = EVALUATOR_SYSTEM_PROMPT
@@ -421,12 +205,43 @@ class EvaluatorAgent(BaseAgent):
             self._reasoning_service = ReasoningService()
         return self._reasoning_service
 
+    async def _get_prompt_evaluation_service(self) -> PromptEvaluationService:
+        """Get or create prompt evaluation service."""
+        if self._prompt_evaluation_service is None:
+            reasoning_service = await self._get_reasoning_service()
+            self._prompt_evaluation_service = PromptEvaluationService(
+                reasoning_service=reasoning_service
+            )
+        return self._prompt_evaluation_service
+
+    async def _get_result_evaluation_service(self) -> ResultEvaluationService:
+        """Get or create result evaluation service."""
+        if self._result_evaluation_service is None:
+            reasoning_service = await self._get_reasoning_service()
+            self._result_evaluation_service = ResultEvaluationService(
+                reasoning_service=reasoning_service
+            )
+        return self._result_evaluation_service
+
     async def close(self) -> None:
         """Close resources."""
-        if self._text_service and self._owns_services["text"]:
-            await self._text_service.close()
+        # Close evaluation services first (they depend on reasoning service)
+        if self._prompt_evaluation_service and self._owns_services["prompt_evaluation"]:
+            await self._prompt_evaluation_service.close()
+            self._prompt_evaluation_service = None
+
+        if self._result_evaluation_service and self._owns_services["result_evaluation"]:
+            await self._result_evaluation_service.close()
+            self._result_evaluation_service = None
+
+        # Close base services
         if self._reasoning_service and self._owns_services["reasoning"]:
             await self._reasoning_service.close()
+            self._reasoning_service = None
+
+        if self._text_service and self._owns_services["text"]:
+            await self._text_service.close()
+            self._text_service = None
 
     async def run(
         self,
@@ -504,6 +319,11 @@ class EvaluatorAgent(BaseAgent):
             dimensions=dimensions,
         )
 
+        # Get weights and thresholds from service
+        result_eval_service = await self._get_result_evaluation_service()
+        result_weights = result_eval_service.get_weights(mode)
+        result_thresholds = result_eval_service.get_thresholds(mode)
+
         # Create evaluation plan for Phase 2
         evaluation_plan = EvaluationPlan(
             job_id=context.job_id,
@@ -514,8 +334,8 @@ class EvaluatorAgent(BaseAgent):
             print_method=print_method,
             dimensions_requested=dimensions,
             prompt_quality=prompt_quality,
-            result_weights=RESULT_QUALITY_WEIGHTS.get(mode, RESULT_QUALITY_WEIGHTS["STANDARD"]),
-            result_thresholds=RESULT_QUALITY_THRESHOLDS.get(mode, RESULT_QUALITY_THRESHOLDS["STANDARD"]),
+            result_weights=result_weights,
+            result_thresholds=result_thresholds,
             metadata={
                 "created_for": context.job_id,
                 "max_retries": self.max_retries,
@@ -573,8 +393,10 @@ class EvaluatorAgent(BaseAgent):
     ) -> PromptQualityResult:
         """Evaluate prompt quality across all dimensions."""
 
-        weights = PROMPT_QUALITY_WEIGHTS.get(mode, PROMPT_QUALITY_WEIGHTS["STANDARD"])
-        thresholds = PROMPT_QUALITY_THRESHOLDS.get(mode, PROMPT_QUALITY_THRESHOLDS["STANDARD"])
+        # Get weights and thresholds from service
+        prompt_eval_service = await self._get_prompt_evaluation_service()
+        weights = prompt_eval_service.get_weights(mode)
+        thresholds = prompt_eval_service.get_thresholds(mode)
 
         # Score each dimension
         scores = {}
@@ -848,19 +670,20 @@ class EvaluatorAgent(BaseAgent):
         # Create plan if not provided
         if not evaluation_plan:
             plan_data = context.plan or {}
+            mode = plan_data.get("mode", "STANDARD")
+
+            # Get weights and thresholds from service
+            result_eval_service = await self._get_result_evaluation_service()
+            result_weights = result_eval_service.get_weights(mode)
+            result_thresholds = result_eval_service.get_thresholds(mode)
+
             evaluation_plan = EvaluationPlan(
                 job_id=context.job_id,
                 prompt=plan_data.get("prompt", ""),
                 negative_prompt=plan_data.get("negative_prompt", ""),
-                mode=plan_data.get("mode", "STANDARD"),
-                result_weights=RESULT_QUALITY_WEIGHTS.get(
-                    plan_data.get("mode", "STANDARD"),
-                    RESULT_QUALITY_WEIGHTS["STANDARD"]
-                ),
-                result_thresholds=RESULT_QUALITY_THRESHOLDS.get(
-                    plan_data.get("mode", "STANDARD"),
-                    RESULT_QUALITY_THRESHOLDS["STANDARD"]
-                ),
+                mode=mode,
+                result_weights=result_weights,
+                result_thresholds=result_thresholds,
             )
 
         # Evaluate result quality
@@ -912,8 +735,14 @@ class EvaluatorAgent(BaseAgent):
     ) -> ResultQualityResult:
         """Evaluate result quality across all dimensions."""
 
-        weights = plan.result_weights or RESULT_QUALITY_WEIGHTS["STANDARD"]
-        thresholds = plan.result_thresholds or RESULT_QUALITY_THRESHOLDS["STANDARD"]
+        # Get weights and thresholds from plan or service
+        if plan.result_weights and plan.result_thresholds:
+            weights = plan.result_weights
+            thresholds = plan.result_thresholds
+        else:
+            result_eval_service = await self._get_result_evaluation_service()
+            weights = plan.result_weights or result_eval_service.get_weights(plan.mode)
+            thresholds = plan.result_thresholds or result_eval_service.get_thresholds(plan.mode)
 
         scores = {}
         feedback = []

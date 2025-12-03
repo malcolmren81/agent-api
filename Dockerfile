@@ -40,7 +40,7 @@ ENV PYTHONUNBUFFERED=1 \
 # Set working directory
 WORKDIR /app
 
-# Install runtime dependencies including Node.js for Prisma and all Prisma query engine dependencies
+# Install runtime dependencies including Node.js for Prisma, postgresql-client for migrations
 # Use official Node.js binaries instead of NodeSource repository to avoid external dependency failures
 RUN apt-get update && apt-get install -y \
     curl \
@@ -48,6 +48,7 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     openssl \
     xz-utils \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-x64.tar.xz -o /tmp/node.tar.xz \
     && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
@@ -64,10 +65,7 @@ COPY src/ ./src/
 COPY config/ ./config/
 COPY prisma/ ./prisma/
 COPY palet8_agents/ ./palet8_agents/
-COPY deploy-with-migrations.sh ./
-
-# Make deployment script executable
-RUN chmod +x ./deploy-with-migrations.sh
+COPY migrations/ ./migrations/
 
 # Prisma client already generated in builder stage and copied via /root/.local
 # No need to regenerate here - this speeds up the build
@@ -82,6 +80,13 @@ EXPOSE 8000 9090
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the application directly with uvicorn for fast startup
-# Prisma is already generated at build time, no runtime delay
-CMD uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 300
+# Create startup script that runs safe SQL migrations then starts the app
+RUN echo '#!/bin/sh' > /app/start.sh && \
+    echo 'echo "Running safe SQL migrations..."' >> /app/start.sh && \
+    echo 'psql "$DATABASE_URL" < migrations/init.sql 2>&1 | grep -E "CREATE|ERROR|DETAIL|NOTICE" || true' >> /app/start.sh && \
+    echo 'echo "Migrations complete. Starting server..."' >> /app/start.sh && \
+    echo 'exec uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 300' >> /app/start.sh && \
+    chmod +x /app/start.sh
+
+# Start the service with migrations
+CMD ["/app/start.sh"]

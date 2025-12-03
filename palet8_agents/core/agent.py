@@ -13,7 +13,7 @@ from datetime import datetime
 import time
 
 if TYPE_CHECKING:
-    from palet8_agents.tools.base import BaseTool
+    from palet8_agents.tools.base import BaseTool, ToolResult
 
 
 class AgentState(Enum):
@@ -275,6 +275,58 @@ class BaseAgent(ABC):
             if tool.name == tool_name:
                 return tool
         return None
+
+    async def call_tool(
+        self,
+        tool_name: str,
+        action: str,
+        **kwargs,
+    ) -> "ToolResult":
+        """
+        Call a tool by name with the specified action.
+
+        This is a convenience method for agents to call their tools
+        with proper error handling and logging.
+
+        Args:
+            tool_name: Name of the tool to call
+            action: Action to perform (passed as 'action' parameter)
+            **kwargs: Additional parameters for the tool
+
+        Returns:
+            ToolResult from the tool execution
+
+        Example:
+            result = await self.call_tool("context", "get_user_history", user_id="user-123")
+        """
+        from palet8_agents.tools.base import ToolResult
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        tool = await self.get_tool(tool_name)
+        if tool is None:
+            logger.error(f"[{self.name}] Tool not found: {tool_name}")
+            return ToolResult(
+                success=False,
+                data=None,
+                error=f"Tool not found: {tool_name}",
+                error_code="TOOL_NOT_FOUND",
+            )
+
+        try:
+            logger.debug(f"[{self.name}] Calling tool: {tool_name}.{action}")
+            result = await tool(action=action, **kwargs)
+            logger.debug(f"[{self.name}] Tool result: success={result.success}")
+            return result
+        except Exception as e:
+            logger.error(f"[{self.name}] Tool call failed: {tool_name}.{action}: {e}")
+            return ToolResult(
+                success=False,
+                data=None,
+                error=str(e),
+                error_code="TOOL_CALL_ERROR",
+            )
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(name={self.name!r}, state={self.state.value})"

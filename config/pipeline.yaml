@@ -1,0 +1,123 @@
+# =============================================================================
+# Pipeline Configuration
+# =============================================================================
+# Configuration for single vs dual pipeline decision making.
+# Defines triggers for dual pipeline and pipeline model configurations.
+# =============================================================================
+
+version: "1.0"
+
+# =============================================================================
+# Dual Pipeline Triggers
+# =============================================================================
+# Keywords that trigger dual pipeline selection when detected in requirements/prompt
+# =============================================================================
+dual_pipeline_triggers:
+  # Text accuracy needed - requires generator + text editor
+  text_in_image:
+    - text
+    - typography
+    - lettering
+    - font
+    - words
+    - title
+    - headline
+    - quote
+    - caption
+    - label
+
+  # Character refinement - requires generator + editor
+  character_refinement:
+    - character edit
+    - face fix
+    - expression change
+    - pose adjust
+    - facial expression
+    - character pose
+
+  # Multi-element composition - complex scenes
+  multi_element:
+    - multiple subjects
+    - complex composition
+    - layered design
+    - multiple characters
+    - group scene
+
+  # Production quality requirements
+  production_quality:
+    - print-ready
+    - production
+    - high accuracy
+    - 4k
+    - poster
+    - billboard
+    - large format
+
+# =============================================================================
+# Dual Pipeline Configurations
+# =============================================================================
+# Pre-defined dual pipeline setups for different use cases
+# =============================================================================
+dual_pipelines:
+  creative_art:
+    name: "High-Creative Art Pipeline"
+    description: "For creative, non-realistic compositions"
+    stage_1_model: "midjourney-v7"
+    stage_1_purpose: "Generate creative, non-realistic composition"
+    stage_2_model: "nano-banana-2-pro"
+    stage_2_purpose: "Refine characters, add/correct text, adjust elements"
+
+  photorealistic:
+    name: "Photorealistic Pipeline"
+    description: "For photorealistic product and lifestyle images"
+    stage_1_model: "imagen-4-ultra"
+    stage_1_purpose: "Generate photorealistic base with exceptional detail"
+    stage_2_model: "nano-banana-2-pro"
+    stage_2_purpose: "Character edits, text overlays, stylistic adjustments"
+
+  layout_poster:
+    name: "Layout & Poster Design Pipeline"
+    description: "For layouts, posters, and designs with precise text placement"
+    stage_1_model: "flux-2-flex"
+    stage_1_purpose: "Generate layout with accurate text placement"
+    stage_2_model: "qwen-image-edit"
+    stage_2_purpose: "Targeted edits, text correction, color adjustments"
+
+# =============================================================================
+# Pipeline Selection Logic
+# =============================================================================
+# Rules for selecting which dual pipeline to use when triggered
+# =============================================================================
+pipeline_selection:
+  # Style-based selection
+  style_mapping:
+    photorealistic: "photorealistic"
+    photo: "photorealistic"
+    realistic: "photorealistic"
+    product: "photorealistic"
+    lifestyle: "photorealistic"
+
+  # Content-based selection
+  content_mapping:
+    poster: "layout_poster"
+    banner: "layout_poster"
+    infographic: "layout_poster"
+    layout: "layout_poster"
+
+  # Default fallback
+  default: "creative_art"
+
+# =============================================================================
+# Cost Estimation
+# =============================================================================
+cost_estimation:
+  default_per_image: 0.04           # Default cost if not specified
+  default_latency_ms: 15000         # Default latency in milliseconds
+  dual_pipeline_latency_multiplier: 2.5  # Dual pipeline takes ~2.5x longer
+
+# =============================================================================
+# Single Pipeline Settings
+# =============================================================================
+single_pipeline:
+  default_purpose: "Generate final image"
+  model_selection: "dynamic"        # Use model selection service

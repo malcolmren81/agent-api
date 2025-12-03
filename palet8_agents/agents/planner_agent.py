@@ -1,7 +1,9 @@
 """
 Planner Agent - Central orchestrator for AI image generation planning.
 
-This agent is the DECISION MAKER that orchestrates the entire planning flow:
+This agent is the DECISION MAKER that orchestrates the entire planning flow.
+
+Refactored to use models package for data classes and delegate to specialized services.
 
 Key Responsibilities (from Swimlane Diagram):
 1. Evaluate Task - Check if we have enough context
@@ -35,6 +37,18 @@ from palet8_agents.core.agent import BaseAgent, AgentContext, AgentResult
 from palet8_agents.core.config import get_config
 from palet8_agents.tools.base import BaseTool
 
+# Import from models package (refactored - no longer using inline classes)
+from palet8_agents.models import (
+    PlannerPhase,
+    ContextCompleteness,
+    SafetyClassification,
+    PromptDimensions,
+    GenerationParameters,
+    PipelineConfig,
+    AssemblyRequest,
+    EvaluationFeedback,
+)
+
 from palet8_agents.services.text_llm_service import TextLLMService
 from palet8_agents.services.reasoning_service import ReasoningService, QualityScore
 from palet8_agents.services.context_service import ContextService, Context
@@ -47,251 +61,22 @@ from palet8_agents.services.prompt_composer_service import (
     ComposedPrompt,
 )
 
+# Import new services (PR 2 & 3)
+from palet8_agents.services.context_analysis_service import ContextAnalysisService
+from palet8_agents.services.dimension_selection_service import DimensionSelectionService
+from palet8_agents.services.model_selection_service import ModelSelectionService
+from palet8_agents.services.prompt_evaluation_service import PromptEvaluationService
+from palet8_agents.services.safety_classification_service import SafetyClassificationService
+
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# EXECUTION PHASES
+# NOTE: Data classes (PlannerPhase, ContextCompleteness, SafetyClassification,
+# PromptDimensions, GenerationParameters, PipelineConfig, AssemblyRequest,
+# EvaluationFeedback) have been moved to palet8_agents.models package.
+# Import them from there for consistency.
 # =============================================================================
-
-class PlannerPhase(Enum):
-    """Planner Agent execution phases."""
-    INITIAL = "initial"           # First run - evaluate context, create plan
-    FIX_PLAN = "fix_plan"         # After evaluation rejection - fix the plan
-    CLARIFY = "clarify"           # After receiving clarification from Pali
-
-
-# =============================================================================
-# DATA CLASSES
-# =============================================================================
-
-@dataclass
-class ContextCompleteness:
-    """Result of context completeness evaluation."""
-    score: float  # 0.0 to 1.0
-    is_sufficient: bool
-    missing_fields: List[str]
-    clarifying_questions: List[str]
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "score": self.score,
-            "is_sufficient": self.is_sufficient,
-            "missing_fields": self.missing_fields,
-            "clarifying_questions": self.clarifying_questions,
-            "metadata": self.metadata,
-        }
-
-
-@dataclass
-class SafetyClassification:
-    """Safety classification result."""
-    is_safe: bool
-    requires_review: bool
-    risk_level: str  # "low", "medium", "high"
-    categories: List[str]  # Detected risk categories
-    flags: Dict[str, bool] = field(default_factory=dict)
-    reason: str = ""
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "is_safe": self.is_safe,
-            "requires_review": self.requires_review,
-            "risk_level": self.risk_level,
-            "categories": self.categories,
-            "flags": self.flags,
-            "reason": self.reason,
-        }
-
-
-@dataclass
-class PromptDimensions:
-    """Selected dimensions for prompt assembly."""
-    subject: Optional[str] = None
-    aesthetic: Optional[str] = None
-    color: Optional[str] = None
-    composition: Optional[str] = None
-    background: Optional[str] = None
-    lighting: Optional[str] = None
-    texture: Optional[str] = None
-    detail_level: Optional[str] = None
-    mood: Optional[str] = None
-    expression: Optional[str] = None
-    pose: Optional[str] = None
-    art_movement: Optional[str] = None
-    reference_style: Optional[str] = None
-    technical: Dict[str, str] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary, excluding None values."""
-        result = {}
-        for key, value in self.__dict__.items():
-            if value is not None:
-                if isinstance(value, dict) and not value:
-                    continue
-                result[key] = value
-        return result
-
-
-@dataclass
-class GenerationParameters:
-    """Image generation parameters."""
-    width: int = 1024
-    height: int = 1024
-    steps: int = 30
-    guidance_scale: float = 7.5
-    seed: Optional[int] = None
-    num_images: int = 1
-    # Provider-specific settings (varies by model)
-    provider_settings: Dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        result = {
-            "width": self.width,
-            "height": self.height,
-            "steps": self.steps,
-            "guidance_scale": self.guidance_scale,
-            "seed": self.seed,
-            "num_images": self.num_images,
-        }
-        if self.provider_settings:
-            result["provider_settings"] = self.provider_settings
-        return result
-
-
-@dataclass
-class PipelineConfig:
-    """Configuration for generation pipeline (single or dual model)."""
-    pipeline_type: str = "single"  # "single" or "dual"
-    pipeline_name: Optional[str] = None  # e.g., "creative_art", "photorealistic", "layout_poster"
-
-    # Stage 1 (generator) - always used
-    stage_1_model: str = ""
-    stage_1_purpose: str = ""
-
-    # Stage 2 (editor) - only for dual pipeline
-    stage_2_model: Optional[str] = None
-    stage_2_purpose: Optional[str] = None
-
-    # Decision rationale
-    decision_rationale: str = ""
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "pipeline_type": self.pipeline_type,
-            "pipeline_name": self.pipeline_name,
-            "stage_1_model": self.stage_1_model,
-            "stage_1_purpose": self.stage_1_purpose,
-            "stage_2_model": self.stage_2_model,
-            "stage_2_purpose": self.stage_2_purpose,
-            "decision_rationale": self.decision_rationale,
-        }
-
-
-@dataclass
-class AssemblyRequest:
-    """
-    Structured request for downstream services (Generation, Writer, Evaluation).
-
-    This is the OUTPUT of Planner Agent - contains everything needed for generation.
-    """
-    # Core prompt data
-    prompt: str = ""
-    negative_prompt: str = ""
-    mode: str = "STANDARD"
-    dimensions: Dict[str, Any] = field(default_factory=dict)
-
-    # Pipeline configuration (single vs dual model)
-    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
-
-    # Model selection (primary model for single, stage_1 for dual)
-    model_id: str = ""
-    model_rationale: str = ""
-    model_alternatives: List[str] = field(default_factory=list)
-
-    # Generation parameters
-    parameters: GenerationParameters = field(default_factory=GenerationParameters)
-
-    # Reference assets
-    reference_image_url: Optional[str] = None
-    reference_strength: float = 0.75
-
-    # Quality assessment
-    prompt_quality_score: float = 0.0
-    quality_acceptable: bool = False
-
-    # Safety
-    safety: SafetyClassification = field(default_factory=lambda: SafetyClassification(
-        is_safe=True, requires_review=False, risk_level="low", categories=[]
-    ))
-
-    # Cost estimation
-    estimated_cost: float = 0.0
-    estimated_time_ms: int = 0
-
-    # Context used
-    context_used: Optional[Dict[str, Any]] = None
-
-    # Job metadata
-    job_id: str = ""
-    user_id: str = ""
-    product_type: str = ""
-    print_method: Optional[str] = None
-    revision_count: int = 0
-
-    # Metadata
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "prompt": self.prompt,
-            "negative_prompt": self.negative_prompt,
-            "mode": self.mode,
-            "dimensions": self.dimensions,
-            "pipeline": self.pipeline.to_dict() if isinstance(self.pipeline, PipelineConfig) else self.pipeline,
-            "model_id": self.model_id,
-            "model_rationale": self.model_rationale,
-            "model_alternatives": self.model_alternatives,
-            "parameters": self.parameters.to_dict() if isinstance(self.parameters, GenerationParameters) else self.parameters,
-            "reference_image_url": self.reference_image_url,
-            "reference_strength": self.reference_strength,
-            "prompt_quality_score": self.prompt_quality_score,
-            "quality_acceptable": self.quality_acceptable,
-            "safety": self.safety.to_dict() if isinstance(self.safety, SafetyClassification) else self.safety,
-            "estimated_cost": self.estimated_cost,
-            "estimated_time_ms": self.estimated_time_ms,
-            "context_used": self.context_used,
-            "job_id": self.job_id,
-            "user_id": self.user_id,
-            "product_type": self.product_type,
-            "print_method": self.print_method,
-            "revision_count": self.revision_count,
-            "metadata": self.metadata,
-        }
-
-
-@dataclass
-class EvaluationFeedback:
-    """Feedback from Evaluator Agent for Fix Plan loop."""
-    passed: bool
-    overall_score: float
-    issues: List[str]
-    retry_suggestions: List[str]
-    dimension_scores: Dict[str, float] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "EvaluationFeedback":
-        return cls(
-            passed=data.get("passed", False),
-            overall_score=data.get("overall_score", 0.0),
-            issues=data.get("issues", []),
-            retry_suggestions=data.get("retry_suggestions", []),
-            dimension_scores=data.get("dimension_scores", {}),
-            metadata=data.get("metadata", {}),
-        )
 
 
 # =============================================================================
@@ -385,35 +170,13 @@ class PlannerAgent(BaseAgent):
     - Phase CLARIFY: Continue after receiving clarification
     """
 
-    # Context completeness thresholds
-    REQUIRED_FIELDS = ["subject"]
-    IMPORTANT_FIELDS = ["style", "aesthetic", "colors", "product_type"]
-    OPTIONAL_FIELDS = ["mood", "composition", "background", "lighting"]
-
-    # Field weights for completeness scoring
-    COMPLETENESS_WEIGHTS = {
-        "subject": 0.40,
-        "style": 0.15,
-        "aesthetic": 0.15,
-        "colors": 0.10,
-        "product_type": 0.10,
-        "mood": 0.05,
-        "composition": 0.05,
-    }
-
-    # Safety risk keywords (quick check - full safety via SafetyAgent)
-    # High-risk keywords from safety_config.yaml: nsfw.critical_keywords + extreme_block_keywords
-    SAFETY_RISK_KEYWORDS = {
-        "critical": [  # Always block - from safety_config.yaml
-            "nude", "naked", "xxx", "porn", "pornograph", "nsfw", "sexual", "erotic", "hentai",
-            "child abuse", "terror attack", "mass shooting", "torture of children",
-            "nazi propaganda", "genocide", "ethnic cleansing", "white supremacy",
-            "child exploitation", "human trafficking", "csam",
-        ],
-        "high": ["explicit", "violence", "gore", "hate"],
-        "medium": ["sexy", "provocative", "weapon", "blood", "scary"],
-        "low": ["adult", "mature", "dark", "aggressive"],
-    }
+    # =============================================================================
+    # NOTE: Context completeness fields and weights have been moved to
+    # ContextAnalysisService. Use _get_context_analysis_service() to access them.
+    #
+    # NOTE: Safety risk keywords have been moved to SafetyClassificationService.
+    # Use _get_safety_classification_service() to access them.
+    # =============================================================================
 
     def __init__(
         self,
@@ -425,14 +188,38 @@ class PlannerAgent(BaseAgent):
         prompt_template_service: Optional[PromptTemplateService] = None,
         prompt_composer_service: Optional[PromptComposerService] = None,
         web_search_service: Optional[WebSearchService] = None,
+        # New services from PR 2 & 3
+        context_analysis_service: Optional[ContextAnalysisService] = None,
+        dimension_selection_service: Optional[DimensionSelectionService] = None,
+        model_selection_service: Optional[ModelSelectionService] = None,
+        prompt_evaluation_service: Optional[PromptEvaluationService] = None,
+        safety_classification_service: Optional[SafetyClassificationService] = None,
     ):
-        """Initialize the Planner Agent."""
+        """
+        Initialize the Planner Agent.
+
+        Args:
+            tools: Optional list of tools for the agent
+            text_service: TextLLMService for LLM calls
+            reasoning_service: ReasoningService for complex reasoning
+            context_service: ContextService for RAG context retrieval
+            model_info_service: ModelInfoService for model information
+            prompt_template_service: PromptTemplateService for templates
+            prompt_composer_service: PromptComposerService for prompt composition
+            web_search_service: WebSearchService for web search
+            context_analysis_service: ContextAnalysisService for context completeness
+            dimension_selection_service: DimensionSelectionService for dimension selection
+            model_selection_service: ModelSelectionService for model selection
+            prompt_evaluation_service: PromptEvaluationService for prompt quality
+            safety_classification_service: SafetyClassificationService for safety checks
+        """
         super().__init__(
             name="planner",
             description="Central orchestrator for planning, RAG, and model selection",
             tools=tools,
         )
 
+        # Original services
         self._text_service = text_service
         self._reasoning_service = reasoning_service
         self._context_service = context_service
@@ -440,6 +227,13 @@ class PlannerAgent(BaseAgent):
         self._prompt_template_service = prompt_template_service
         self._prompt_composer_service = prompt_composer_service
         self._web_search_service = web_search_service
+
+        # New services (PR 2 & 3)
+        self._context_analysis_service = context_analysis_service
+        self._dimension_selection_service = dimension_selection_service
+        self._model_selection_service = model_selection_service
+        self._prompt_evaluation_service = prompt_evaluation_service
+        self._safety_classification_service = safety_classification_service
 
         self._owns_services = {
             "text": text_service is None,
@@ -449,6 +243,11 @@ class PlannerAgent(BaseAgent):
             "prompt_template": prompt_template_service is None,
             "prompt_composer": prompt_composer_service is None,
             "web_search": web_search_service is None,
+            "context_analysis": context_analysis_service is None,
+            "dimension_selection": dimension_selection_service is None,
+            "model_selection": model_selection_service is None,
+            "prompt_evaluation": prompt_evaluation_service is None,
+            "safety_classification": safety_classification_service is None,
         }
 
         # System prompt
@@ -506,8 +305,41 @@ class PlannerAgent(BaseAgent):
             self._web_search_service = WebSearchService()
         return self._web_search_service
 
+    # New service getters (PR 2 & 3)
+    async def _get_context_analysis_service(self) -> ContextAnalysisService:
+        if self._context_analysis_service is None:
+            self._context_analysis_service = ContextAnalysisService()
+        return self._context_analysis_service
+
+    async def _get_dimension_selection_service(self) -> DimensionSelectionService:
+        if self._dimension_selection_service is None:
+            self._dimension_selection_service = DimensionSelectionService()
+        return self._dimension_selection_service
+
+    async def _get_model_selection_service(self) -> ModelSelectionService:
+        if self._model_selection_service is None:
+            model_info_service = await self._get_model_info_service()
+            self._model_selection_service = ModelSelectionService(
+                model_info_service=model_info_service
+            )
+        return self._model_selection_service
+
+    async def _get_prompt_evaluation_service(self) -> PromptEvaluationService:
+        if self._prompt_evaluation_service is None:
+            reasoning_service = await self._get_reasoning_service()
+            self._prompt_evaluation_service = PromptEvaluationService(
+                reasoning_service=reasoning_service
+            )
+        return self._prompt_evaluation_service
+
+    async def _get_safety_classification_service(self) -> SafetyClassificationService:
+        if self._safety_classification_service is None:
+            self._safety_classification_service = SafetyClassificationService()
+        return self._safety_classification_service
+
     async def close(self) -> None:
         """Close resources."""
+        # Original services
         if self._text_service and self._owns_services["text"]:
             await self._text_service.close()
         if self._reasoning_service and self._owns_services["reasoning"]:
@@ -520,6 +352,18 @@ class PlannerAgent(BaseAgent):
             await self._prompt_composer_service.close()
         if self._web_search_service and self._owns_services["web_search"]:
             await self._web_search_service.close()
+
+        # New services (PR 2 & 3)
+        if self._context_analysis_service and self._owns_services["context_analysis"]:
+            await self._context_analysis_service.close()
+        if self._dimension_selection_service and self._owns_services["dimension_selection"]:
+            await self._dimension_selection_service.close()
+        if self._model_selection_service and self._owns_services["model_selection"]:
+            await self._model_selection_service.close()
+        if self._prompt_evaluation_service and self._owns_services["prompt_evaluation"]:
+            await self._prompt_evaluation_service.close()
+        if self._safety_classification_service and self._owns_services["safety_classification"]:
+            await self._safety_classification_service.close()
 
     # =========================================================================
     # MAIN EXECUTION
@@ -815,51 +659,11 @@ class PlannerAgent(BaseAgent):
         - missing_fields: What's missing
         - clarifying_questions: Questions to ask user
         """
-        score = 0.0
-        missing_required = []
-        missing_important = []
-        questions = []
-
-        # Check required fields
-        for field in self.REQUIRED_FIELDS:
-            if requirements.get(field):
-                score += self.COMPLETENESS_WEIGHTS.get(field, 0.1)
-            else:
-                missing_required.append(field)
-                questions.append(self._generate_question_for_field(field))
-
-        # Check important fields
-        for field in self.IMPORTANT_FIELDS:
-            if requirements.get(field):
-                score += self.COMPLETENESS_WEIGHTS.get(field, 0.05)
-            else:
-                missing_important.append(field)
-
-        # Check optional fields (don't add to missing, just boost score)
-        for field in self.OPTIONAL_FIELDS:
-            if requirements.get(field):
-                score += self.COMPLETENESS_WEIGHTS.get(field, 0.02)
-
-        # Determine if sufficient
-        is_sufficient = (
-            len(missing_required) == 0 and
-            score >= self.min_context_completeness
-        )
-
-        # If missing important fields, add questions
-        if not is_sufficient and len(questions) < 3:
-            for field in missing_important[:3 - len(questions)]:
-                questions.append(self._generate_question_for_field(field))
-
-        return ContextCompleteness(
-            score=min(1.0, score),
-            is_sufficient=is_sufficient,
-            missing_fields=missing_required + missing_important,
-            clarifying_questions=questions[:3],
-            metadata={
-                "required_missing": missing_required,
-                "important_missing": missing_important,
-            },
+        # Delegate to ContextAnalysisService
+        context_analysis_service = await self._get_context_analysis_service()
+        return context_analysis_service.evaluate_completeness(
+            requirements=requirements,
+            threshold=self.min_context_completeness,
         )
 
     def _generate_question_for_field(self, field: str) -> str:
@@ -887,6 +691,8 @@ class PlannerAgent(BaseAgent):
         """
         Classify content safety and determine if review is needed.
 
+        Delegates to SafetyClassificationService for consistent safety checks.
+
         Returns SafetyClassification with risk level and flags.
         """
         # Combine all text content
@@ -896,41 +702,22 @@ class PlannerAgent(BaseAgent):
             str(requirements.get("description", "")),
         ]).lower()
 
-        detected_categories = []
-        risk_level = "low"
+        # Delegate to SafetyClassificationService
+        safety_service = await self._get_safety_classification_service()
+        flag = await safety_service.classify_content(text_content, source="requirements")
 
-        # Check for risk keywords
-        for level, keywords in self.SAFETY_RISK_KEYWORDS.items():
-            for keyword in keywords:
-                if keyword in text_content:
-                    detected_categories.append(keyword)
-                    if level == "high":
-                        risk_level = "high"
-                    elif level == "medium" and risk_level != "high":
-                        risk_level = "medium"
-
-        # Determine safety and review flags
-        is_safe = risk_level != "high"
-        requires_review = risk_level in ["medium", "high"]
-
-        reason = ""
-        if not is_safe:
-            reason = f"Content contains prohibited elements: {', '.join(detected_categories)}"
-        elif requires_review:
-            reason = f"Content requires review: {', '.join(detected_categories)}"
-
-        return SafetyClassification(
-            is_safe=is_safe,
-            requires_review=requires_review,
-            risk_level=risk_level,
-            categories=detected_categories,
-            flags={
-                "nsfw_check_required": "nsfw" in text_content or "nude" in text_content,
-                "violence_check_required": any(w in text_content for w in ["violence", "gore", "blood"]),
-                "ip_check_required": any(w in text_content for w in ["logo", "brand", "trademark", "disney", "marvel"]),
-            },
-            reason=reason,
-        )
+        # Build classification from flag
+        if flag:
+            flags = [flag]
+            return safety_service.create_safety_classification(flags)
+        else:
+            # No issues detected
+            return SafetyClassification(
+                is_safe=True,
+                requires_review=False,
+                risk_level="low",
+                categories=[],
+            )
 
     # =========================================================================
     # MODE DECISION

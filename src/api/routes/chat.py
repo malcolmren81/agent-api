@@ -26,6 +26,8 @@ from src.database import prisma
 from palet8_agents.agents.pali_agent import PaliAgent
 from palet8_agents.core.agent import AgentContext
 from palet8_agents.core.message import Conversation, Message, MessageRole
+from palet8_agents.services.assembly_service import AssemblyService
+from palet8_agents.models import AssemblyRequest, GenerationParameters, PipelineConfig
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -190,12 +192,13 @@ async def get_or_create_conversation(conversation_id: str, user_id: str) -> Dict
 
 async def save_message(conversation_id: str, role: str, content: str, metadata: Optional[Dict] = None) -> None:
     """Save a message to the database."""
+    from prisma import Json
     await prisma.chatmessage.create(
         data={
             "conversationId": conversation_id,
             "role": role,
             "content": content,
-            "metadata": json.dumps(metadata) if metadata else None,
+            "metadata": Json(metadata) if metadata else Json({}),
         }
     )
 
@@ -523,10 +526,9 @@ async def trigger_generation(request: TriggerGenerationRequest):
     """
     async def event_stream():
         """Generate SSE events for the generation pipeline."""
-        from palet8_agents.agents.planner_agent import PlannerAgent
-        from palet8_agents.agents.evaluator_agent import EvaluatorAgent
+        from palet8_agents.agents.planner_agent_v2 import PlannerAgentV2 as PlannerAgent
+        from palet8_agents.agents.evaluator_agent_v2 import EvaluatorAgentV2 as EvaluatorAgent
         from palet8_agents.core.agent import AgentContext as PaletAgentContext
-        import httpx
 
         task_id = str(uuid4())
 
@@ -606,20 +608,15 @@ async def trigger_generation(request: TriggerGenerationRequest):
                 yield f"data: {json.dumps({'type': 'error', 'task_id': task_id, 'error': plan_result.error or 'Planning failed'})}\n\n"
                 return
 
-            # Extract optimized prompt from plan
+            # Extract optimized prompt and assembly request from plan
             final_prompt = user_prompt
+            model_id = ""
             if plan_result.data:
                 final_prompt = plan_result.data.get("final_prompt", user_prompt)
+                model_id = plan_result.data.get("model_id", "")
 
             # Send model selection status
             yield create_status_event("model_selection", progress=0.3)
-
-            # Send generation start status
-            yield create_status_event("generation_start", progress=0.4)
-
-            # Call generation API directly
-            import os
-            flux_api_key = os.getenv("FLUX_API_KEY")
 
             # Parse dimensions
             width, height = 1024, 1024
@@ -627,58 +624,62 @@ async def trigger_generation(request: TriggerGenerationRequest):
                 parts = dimensions.split("x")
                 width, height = int(parts[0]), int(parts[1])
 
-            # Generate with Flux API
+            # Build AssemblyRequest
+            assembly_request = AssemblyRequest(
+                prompt=final_prompt,
+                negative_prompt=plan_result.data.get("negative_prompt", "") if plan_result.data else "",
+                mode=plan_result.data.get("mode", "STANDARD") if plan_result.data else "STANDARD",
+                model_id=model_id,
+                parameters=GenerationParameters(
+                    width=width,
+                    height=height,
+                    num_images=1,
+                    provider_settings=plan_result.data.get("provider_settings", {}) if plan_result.data else {},
+                ),
+                pipeline=PipelineConfig(
+                    pipeline_type="single",
+                    stage_1_model=model_id,
+                ),
+                job_id=job.id,
+                user_id=request.user_id,
+                product_type=requirements.get("product_type", "general"),
+            )
+
+            # Send generation start status
+            yield create_status_event("generation_start", progress=0.4)
+
+            # Execute generation via AssemblyService
             generated_images = []
             try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
-                    response = await client.post(
-                        "https://api.bfl.ai/v1/flux-pro-1.1",
-                        headers={
-                            "X-Key": flux_api_key,
-                            "Content-Type": "application/json",
-                        },
-                        json={
-                            "prompt": final_prompt,
-                            "width": width,
-                            "height": height,
-                            "num_images": 1,
-                        }
+                async with AssemblyService() as assembly_service:
+                    # Progress callback for SSE updates
+                    async def progress_callback(stage: str, progress: float, message: str = None):
+                        # This is called during generation but we can't yield from here
+                        # So we just log for now
+                        logger.debug(f"Assembly progress: {stage} {progress} {message}")
+
+                    execution_result = await assembly_service.execute(
+                        request=assembly_request,
+                        progress_callback=progress_callback,
                     )
 
-                    if response.status_code == 200:
-                        result_data = response.json()
-                        # Poll for result
-                        request_id = result_data.get("id")
-                        if request_id:
-                            yield create_status_event("generation_progress", progress=0.5)
+                    if not execution_result.success:
+                        raise Exception(execution_result.error or "Generation failed")
 
-                            for _ in range(60):  # Max 60 polls (2 mins)
-                                await asyncio.sleep(2)
-                                poll_response = await client.get(
-                                    f"https://api.bfl.ai/v1/get_result?id={request_id}",
-                                    headers={"X-Key": flux_api_key}
-                                )
-                                if poll_response.status_code == 200:
-                                    poll_data = poll_response.json()
-                                    status = poll_data.get("status")
-                                    if status == "Ready":
-                                        image_url = poll_data.get("result", {}).get("sample")
-                                        if image_url:
-                                            # Download image and convert to base64
-                                            img_response = await client.get(image_url)
-                                            if img_response.status_code == 200:
-                                                import base64
-                                                base64_data = base64.b64encode(img_response.content).decode("utf-8")
-                                                generated_images.append({
-                                                    "base64_data": base64_data,
-                                                    "url": image_url,
-                                                })
-                                        break
-                                    elif status == "Error":
-                                        raise Exception(poll_data.get("error", "Generation failed"))
-                                yield create_status_event("generation_progress", progress=0.5 + (_ * 0.005))
-                    else:
-                        raise Exception(f"Flux API error: {response.status_code}")
+                    # Convert to expected format (inside context manager for download access)
+                    for img in execution_result.images:
+                        image_data = {
+                            "url": img.url,
+                        }
+                        # Download and encode to base64 if needed
+                        if img.url and not img.base64_data:
+                            base64_data = await assembly_service.download_and_encode(img.url)
+                            if base64_data:
+                                image_data["base64_data"] = base64_data
+                        elif img.base64_data:
+                            image_data["base64_data"] = img.base64_data
+
+                        generated_images.append(image_data)
 
             except Exception as gen_error:
                 logger.error(f"Generation error: {gen_error}")

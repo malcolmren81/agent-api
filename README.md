@@ -7,81 +7,66 @@ Multi-agent orchestration service for AI-powered design generation. Transforms u
 | | |
 |---|---|
 | **Service** | palet8-agents |
+| **URL** | https://palet8-agents-kshhjydolq-uc.a.run.app |
 | **Routes** | `/agents/*` |
-| **Stack** | Python, FastAPI, Prisma |
+| **Stack** | Python 3.11, FastAPI, Prisma, PostgreSQL |
 | **Port** | 8000 |
 | **Platform** | Google Cloud Run |
+| **Region** | us-central1 |
+
+## Current Status
+
+| Component | Status |
+|-----------|--------|
+| Core API | Running |
+| Database | Connected (Cloud SQL) |
+| Migrations | Auto-run on startup |
+| Chat Workflow | Active |
+| Image Generation | Runware API |
 
 ## Architecture
 
 ```
 User Request
-    ↓
-┌─────────────────────────────────────────────────────────────┐
-│  PALI AGENT - Conversational requirement gathering          │
-│  • Multi-turn chat with users                               │
-│  • UI selector integration (template, aesthetic, character) │
-│  • Requirements validation & completeness tracking          │
-└─────────────────────────────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────────────────────────────┐
-│  PLANNER AGENT - Central decision making                    │
-│  • Context evaluation & RAG (user history, art library)     │
-│  • Prompt mode selection (RELAX/STANDARD/COMPLEX)           │
-│  • Model selection based on capability/cost analysis        │
-│  • Safety classification                                    │
-└─────────────────────────────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────────────────────────────┐
-│  IMAGE GENERATION                                           │
-│  • Primary: Flux Pro 1.1 (fast, cost-effective)             │
-│  • Fallback: Imagen 3 (photorealistic)                      │
-└─────────────────────────────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────────────────────────────┐
-│  EVALUATOR AGENT - Quality gates                            │
-│  • Prompt quality assessment (before generation)            │
-│  • Result quality scoring (after generation)                │
-│  • Approval/rejection decisions                             │
-└─────────────────────────────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────────────────────────────┐
-│  SAFETY AGENT - Continuous monitoring (non-blocking)        │
-│  • NSFW, violence, hate speech detection                    │
-│  • IP/trademark violation checks                            │
-│  • Risk categorization & recommendations                    │
-└─────────────────────────────────────────────────────────────┘
-    ↓
+    |
++---------------------------------------------------------------+
+|  PALI AGENT - Conversational requirement gathering             |
+|  - Multi-turn chat with users                                  |
+|  - UI selector integration (template, aesthetic, character)    |
+|  - Requirements validation & completeness tracking             |
++---------------------------------------------------------------+
+    |
++---------------------------------------------------------------+
+|  PLANNER AGENT - Central decision making                       |
+|  - Context evaluation & RAG (user history, art library)        |
+|  - Prompt mode selection (RELAX/STANDARD/COMPLEX)              |
+|  - Model selection based on capability/cost analysis           |
+|  - Safety classification                                       |
++---------------------------------------------------------------+
+    |
++---------------------------------------------------------------+
+|  ASSEMBLY SERVICE - Image Generation                           |
+|  - Single/Dual pipeline execution                              |
+|  - Primary: Runware API (Flux, SDXL models)                    |
+|  - Cost tracking per generation                                |
++---------------------------------------------------------------+
+    |
++---------------------------------------------------------------+
+|  EVALUATOR AGENT - Quality gates                               |
+|  - Prompt quality assessment (before generation)               |
+|  - Result quality scoring (after generation)                   |
+|  - Approval/rejection decisions                                |
++---------------------------------------------------------------+
+    |
++---------------------------------------------------------------+
+|  SAFETY AGENT - Continuous monitoring (non-blocking)           |
+|  - NSFW, violence, hate speech detection                       |
+|  - IP/trademark violation checks                               |
+|  - Risk categorization & recommendations                       |
++---------------------------------------------------------------+
+    |
 Approved Image + Metadata
 ```
-
-## Agents
-
-### Pali Agent
-User-facing design assistant that gathers requirements through conversation.
-- Collects: subject, style, colors, mood, composition, elements
-- Integrates with UI selectors (product category, template, aesthetic)
-- Tracks requirement completeness with scoring
-
-### Planner Agent
-Central decision-maker that orchestrates the generation pipeline.
-- Evaluates context and performs RAG lookups
-- Selects prompt mode and image dimensions
-- Chooses optimal model based on complexity and cost
-- Creates execution plan for downstream services
-
-### Evaluator Agent
-Quality gate that ensures output meets standards.
-- **Pre-generation**: Validates prompt clarity, coverage, product constraints
-- **Post-generation**: Scores prompt fidelity, technical quality, aesthetics
-- Approves, requests fixes, or rejects outputs
-
-### Safety Agent
-Continuous content safety monitor.
-- Risk categories: NSFW, violence, hate, IP violations, illegal content
-- Severity levels: none → low → medium → high → critical
-- Context-aware evaluation (understands negative prompts)
-- Non-blocking by default, escalates when necessary
 
 ## API Endpoints
 
@@ -93,40 +78,91 @@ Continuous content safety monitor.
 | `/chat/history/{id}` | GET | Get conversation history |
 | `/chat/generate` | POST | Trigger full generation pipeline |
 
+### Data APIs
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/tasks` | GET | Query task execution logs |
+| `/api/tasks/{id}` | GET | Get specific task details |
+| `/api/agent-logs` | GET | Query agent execution logs |
+| `/api/templates` | GET | Get prompt templates |
+
 ### Health & Monitoring
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `/` | GET | Service info |
 | `/health` | GET | Service health with component status |
-| `/metrics` | GET | Prometheus metrics |
+| `/docs` | GET | OpenAPI documentation |
 
-### Workflow & Logs
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/workflow/{task_id}` | GET | Get complete workflow data |
-| `/api/agent-logs` | GET | Query agent execution logs |
-| `/api/tasks` | GET | Task query and status |
+## Project Structure
 
-## AI Models
+```
+agents-api/
++-- palet8_agents/              # Core agent system
+|   +-- agents/                 # Agent implementations
+|   |   +-- pali_agent.py       # Requirement gathering
+|   |   +-- planner_agent.py    # Decision making
+|   |   +-- evaluator_agent.py  # Quality gates
+|   |   +-- safety_agent.py     # Safety monitoring
+|   +-- core/                   # Framework (BaseAgent, Context, Message)
+|   +-- models/                 # Data models (shared across agents)
+|   |   +-- requirements.py     # RequirementsStatus
+|   |   +-- context.py          # ContextCompleteness
+|   |   +-- safety.py           # SafetyClassification, SafetyFlag
+|   |   +-- prompt.py           # PromptDimensions, PromptQualityResult
+|   |   +-- generation.py       # GenerationParameters, PipelineConfig
+|   |   +-- evaluation.py       # EvaluationPlan, ResultQualityResult
+|   +-- services/               # Business logic services
+|   |   +-- text_llm_service.py           # LLM text generation
+|   |   +-- reasoning_service.py          # Complex reasoning tasks
+|   |   +-- image_generation_service.py   # Image gen via Runware
+|   |   +-- assembly_service.py           # Pipeline orchestration
+|   |   +-- prompt_composer_service.py    # Prompt construction
+|   |   +-- embedding_service.py          # Vector embeddings
+|   +-- tools/                  # Agent tools
+|       +-- context_tool.py     # RAG, memory, references
+|       +-- safety_tool.py      # Content safety checks
+|       +-- registry.py         # Tool registry
++-- src/
+|   +-- api/
+|   |   +-- main.py             # FastAPI app
+|   |   +-- routes/             # API endpoints
+|   |       +-- chat.py         # Chat API (Pali integration)
+|   |       +-- tasks.py        # Task logs API
+|   |       +-- agent_logs.py   # Agent execution logs
+|   |       +-- templates.py    # Prompt templates
+|   +-- database/               # Prisma client
+|   +-- models/                 # Pydantic schemas
+|   +-- utils/                  # Logger, metrics, health check
++-- prisma/
+|   +-- schema.prisma           # Database schema
++-- migrations/
+|   +-- init.sql                # Database migrations (auto-run)
++-- config/                     # YAML configs
+|   +-- safety_config.yaml      # Safety rules
+|   +-- image_models_config.yaml # Model registry
++-- Dockerfile
++-- requirements.txt
+```
 
-All model calls go through unified API providers (no direct model integrations):
+## Database Models
 
-### Reasoning (via OpenRouter)
-- Gemini 2.0 Flash, GPT-4o, Claude, and other models
-- Automatic routing and fallback handling
-
-### Image Generation (via Runware)
-- Flux Pro 1.1, SDXL, and other models
-- Unified image generation API
-
-### Embeddings (direct)
-- Only embedding calls use direct API integration
+| Model | Purpose |
+|-------|---------|
+| **Job** | Agent task execution (status, requirements, plan, evaluation) |
+| **Conversation** | Multi-turn chat sessions |
+| **ChatMessage** | Conversation history |
+| **Design** | Generated design outputs |
+| **Task** | Full pipeline logs with performance metrics |
+| **AgentLog** | Per-agent execution tracking |
+| **Template** | Reusable prompt templates |
 
 ## Local Development
 
 ### Prerequisites
 - Python 3.11+
 - Node.js 20+ (for Prisma)
-- API keys: OPENROUTER_API_KEY, FLUX_API_KEY
+- PostgreSQL database
+- API keys: OPENROUTER_API_KEY, RUNWARE_API_KEY
 
 ### Setup
 ```bash
@@ -147,65 +183,46 @@ uvicorn src.api.main:app --reload --port 8000
 
 ## Deployment
 
+The service uses automatic database migrations on startup via `migrations/init.sql`.
+
 ```bash
+# Deploy to Cloud Run
 gcloud run deploy palet8-agents \
   --source . \
   --region us-central1 \
-  --allow-unauthenticated \
-  --memory 4Gi \
-  --cpu 2 \
-  --timeout 300 \
-  --set-secrets="OPENROUTER_API_KEY=openrouter-api-key:latest,FLUX_API_KEY=flux-api-key:latest"
+  --project palet8-system \
+  --allow-unauthenticated
+
+# Route traffic to latest
+gcloud run services update-traffic palet8-agents \
+  --region us-central1 \
+  --to-latest
 ```
 
-## Project Structure
+### Environment Variables (via Secret Manager)
 
-```
-agents-api/
-├── palet8_agents/              # Core agent system
-│   ├── agents/                 # Agent implementations
-│   │   ├── pali_agent.py       # Requirement gathering
-│   │   ├── planner_agent.py    # Decision making
-│   │   ├── evaluator_agent.py  # Quality gates
-│   │   └── safety_agent.py     # Safety monitoring
-│   ├── core/                   # Framework (BaseAgent, Context, Message)
-│   ├── services/               # LLM, embedding, prompt services
-│   └── tools/                  # Agent tools (search, image, context)
-├── src/
-│   ├── api/
-│   │   ├── main.py             # FastAPI app
-│   │   ├── websocket.py        # Real-time updates
-│   │   └── routes/             # API endpoints
-│   │       ├── chat.py         # Chat API (Pali integration)
-│   │       ├── workflow.py     # Workflow tracking
-│   │       └── agent_logs.py   # Execution logs
-│   ├── database/               # Prisma client
-│   ├── models/                 # Pydantic schemas
-│   └── utils/                  # Logger, metrics, health check
-├── prisma/
-│   └── schema.prisma           # Database schema
-├── config/                     # YAML configs (safety, evaluation, models)
-├── docs/archive/               # Archived old code
-├── Dockerfile
-└── requirements.txt
-```
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string (Cloud SQL) |
+| `GEMINI_API_KEY` | Google Gemini API key |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `RUNWARE_API_KEY` | Runware image generation API |
+| `FLUX_API_KEY` | Black Forest Labs Flux API |
+| `PALET8_API_URL` | Palet8 backend API URL |
+| `PALET8_API_KEY` | Palet8 backend API key |
 
-## Database Models
+## AI Models
 
-- **Conversation** - Multi-turn chat sessions
-- **ChatMessage** - Conversation history
-- **Job** - Agent task execution (status, requirements, plan, evaluation)
-- **AgentLog** - Per-agent execution tracking
-- **Task** - Full pipeline logs with performance metrics
+### Reasoning (via OpenRouter)
+- Gemini 2.0 Flash (primary)
+- GPT-4o (fallback)
+- Automatic routing and fallback handling
 
-## Environment Variables
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `OPENROUTER_API_KEY` | OpenRouter API key (Gemini, GPT-4o) | Yes |
-| `FLUX_API_KEY` | Black Forest Labs Flux API | Yes |
-| `DATABASE_URL` | PostgreSQL connection string | Yes |
-| `RUNWARE_API_KEY` | Runware image API | Optional |
+### Image Generation (via Runware)
+- Flux Pro models
+- SDXL variants
+- Unified cost tracking
 
 ## Key Features
 
@@ -213,4 +230,20 @@ agents-api/
 - **Quality Gates**: Multi-dimensional evaluation before and after generation
 - **Safety First**: Continuous content monitoring without blocking workflow
 - **Observability**: Full execution logging with performance metrics
+- **Auto Migrations**: Database schema applied on container startup
 - **Fallback Handling**: Automatic model switching on failures
+
+## Testing
+
+```bash
+# Health check
+curl https://palet8-agents-kshhjydolq-uc.a.run.app/health
+
+# Start conversation
+curl -X POST https://palet8-agents-kshhjydolq-uc.a.run.app/chat/start \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "test-user"}'
+
+# Query tasks
+curl https://palet8-agents-kshhjydolq-uc.a.run.app/api/tasks
+```

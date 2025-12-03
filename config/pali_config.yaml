@@ -1,0 +1,79 @@
+# =============================================================================
+# Pali Agent Configuration
+# =============================================================================
+# Configuration for the user-facing design assistant agent.
+# Controls completeness scoring, input validation, and LLM behavior.
+# =============================================================================
+
+version: "1.0"
+
+# =============================================================================
+# Requirements Completeness Scoring
+# =============================================================================
+# Weights for calculating requirement completeness score (0.0 to 1.0)
+# This is for UI feedback only - Planner does the thorough "Enough Context?" check
+# =============================================================================
+completeness:
+  threshold: 0.5  # Minimum score to consider requirements "complete"
+  weights:
+    subject: 0.50   # Main subject/concept is most important
+    style: 0.20     # Visual style
+    colors: 0.15    # Color preferences
+    mood: 0.15      # Emotional tone
+
+# =============================================================================
+# Input Validation
+# =============================================================================
+input_validation:
+  min_length: 3        # Minimum characters for user input
+  max_length: 10000    # Maximum characters for user input
+
+# =============================================================================
+# LLM Configuration
+# =============================================================================
+llm:
+  extraction_temperature: 0.2   # Lower temp for structured data extraction
+  response_temperature: 0.7     # Higher temp for natural responses
+  max_qa_rounds: null           # null = unlimited Q&A rounds
+
+# =============================================================================
+# Required and Recommended Fields
+# =============================================================================
+# Required: Must be present to proceed to Planner
+# Recommended: Nice to have, boosts completeness score
+# =============================================================================
+required_fields:
+  - subject
+
+recommended_fields:
+  - style
+  - colors
+  - mood
+
+# =============================================================================
+# UI Selector Categories
+# =============================================================================
+# Reference for UI integration - products, templates, aesthetics
+# =============================================================================
+ui_selectors:
+  product_categories:
+    - apparel
+    - drinkware
+    - wall_art
+    - accessories
+    - stickers
+
+  aesthetic_styles:
+    - realistic
+    - illustration
+    - cartoon
+    - minimal
+    - vintage
+    - streetwear
+
+  aspect_ratios:
+    - square        # 1:1
+    - landscape     # 16:9
+    - portrait      # 9:16
+    - wide          # 21:9
+    - tall          # 9:21

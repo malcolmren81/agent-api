@@ -63,7 +63,11 @@ class ImageGenerationRequest:
     guidance_scale: float = 7.5
     seed: Optional[int] = None
     reference_image_url: Optional[str] = None
+    reference_strength: float = 0.75
     style: Optional[str] = None
+    # Provider-specific settings (varies by model/provider)
+    # e.g., {"lora_weights": [...], "scheduler": "euler", "safety_checker": false}
+    provider_settings: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -80,7 +84,9 @@ class ImageGenerationRequest:
             "guidance_scale": self.guidance_scale,
             "seed": self.seed,
             "reference_image_url": self.reference_image_url,
+            "reference_strength": self.reference_strength,
             "style": self.style,
+            "provider_settings": self.provider_settings,
             "metadata": self.metadata,
         }
 
@@ -164,21 +170,20 @@ class ImageGenerationService:
     def __init__(
         self,
         runware_api_key: Optional[str] = None,
-        flux_api_key: Optional[str] = None,
         timeout: float = 120.0,
         max_retries: int = 3,
     ):
         """
         Initialize ImageGenerationService.
 
+        All generation uses Runware API.
+
         Args:
             runware_api_key: Runware API key
-            flux_api_key: Flux API key
             timeout: Request timeout in seconds
             max_retries: Maximum retry attempts
         """
         self.runware_api_key = runware_api_key or os.environ.get("RUNWARE_API_KEY", "")
-        self.flux_api_key = flux_api_key or os.environ.get("FLUX_API_KEY", "")
         self.timeout = timeout
         self.max_retries = max_retries
         self._client: Optional[httpx.AsyncClient] = None
@@ -268,7 +273,7 @@ class ImageGenerationService:
         request: ImageGenerationRequest,
     ) -> ImageGenerationResult:
         """
-        Generate images from a request.
+        Generate images from a request using Runware API.
 
         Args:
             request: ImageGenerationRequest with prompt and parameters
@@ -282,9 +287,8 @@ class ImageGenerationService:
         import time
         start_time = time.time()
 
-        # Determine model/provider to use
-        model = request.model or self._config.image_models.primary or "flux-1-kontext-pro"
-        provider = self._detect_provider(model)
+        # Determine model to use (all via Runware)
+        model = request.model or self._config.image_models.primary or "runware:101@1"
 
         # Get dimensions
         width, height = self._get_dimensions(request)
@@ -294,13 +298,7 @@ class ImageGenerationService:
 
         for attempt in range(self.max_retries + 1):
             try:
-                if provider == "runware":
-                    result = await self._generate_runware(request, model, width, height)
-                elif provider == "flux":
-                    result = await self._generate_flux(request, model, width, height)
-                else:
-                    result = await self._generate_flux(request, model, width, height)
-
+                result = await self._generate_runware(request, model, width, height)
                 result.duration_ms = int((time.time() - start_time) * 1000)
                 return result
 
@@ -314,16 +312,6 @@ class ImageGenerationService:
                 continue
 
         raise ImageGenerationError(f"Generation failed after {self.max_retries + 1} attempts: {last_error}")
-
-    def _detect_provider(self, model: str) -> str:
-        """Detect provider from model name."""
-        model_lower = model.lower()
-        if "runware" in model_lower:
-            return "runware"
-        elif "flux" in model_lower:
-            return "flux"
-        else:
-            return "flux"  # Default to flux
 
     async def _generate_runware(
         self,
@@ -350,6 +338,25 @@ class ImageGenerationService:
 
         if request.seed is not None:
             payload["seed"] = request.seed
+
+        if request.reference_image_url:
+            payload["inputImage"] = request.reference_image_url
+            payload["strength"] = request.reference_strength
+
+        # Apply provider-specific settings (Runware-specific params)
+        # e.g., lora, scheduler, clipSkip, etc.
+        if request.provider_settings:
+            for key, value in request.provider_settings.items():
+                # Map common settings to Runware-specific keys
+                runware_key_map = {
+                    "scheduler": "scheduler",
+                    "lora": "lora",
+                    "lora_weights": "lora",
+                    "clip_skip": "clipSkip",
+                    "safety_checker": "checkNSFW",
+                }
+                mapped_key = runware_key_map.get(key, key)
+                payload[mapped_key] = value
 
         try:
             response = await client.post(
@@ -384,114 +391,6 @@ class ImageGenerationService:
 
         except httpx.TimeoutException:
             raise GenerationTimeoutError(f"Runware request timed out after {self.timeout}s")
-
-    async def _generate_flux(
-        self,
-        request: ImageGenerationRequest,
-        model: str,
-        width: int,
-        height: int,
-    ) -> ImageGenerationResult:
-        """Generate images using Flux API."""
-        client = await self._get_client()
-
-        payload = {
-            "prompt": request.prompt,
-            "model": model,
-            "width": width,
-            "height": height,
-            "num_outputs": request.num_images,
-            "num_inference_steps": request.steps,
-            "guidance_scale": request.guidance_scale,
-        }
-
-        if request.negative_prompt:
-            payload["negative_prompt"] = request.negative_prompt
-
-        if request.seed is not None:
-            payload["seed"] = request.seed
-
-        if request.reference_image_url:
-            payload["image_url"] = request.reference_image_url
-
-        try:
-            response = await client.post(
-                "https://api.bfl.ml/v1/flux-pro-1.1",
-                headers={
-                    "X-Key": self.flux_api_key,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-
-            if response.status_code != 200:
-                raise ProviderError(f"Flux API error ({response.status_code}): {response.text}")
-
-            data = response.json()
-
-            # Handle async generation (polling)
-            if "id" in data:
-                result = await self._poll_flux_result(data["id"])
-                data = result
-
-            images = []
-            for output in data.get("output", []):
-                if isinstance(output, str):
-                    images.append(GeneratedImage(url=output))
-                elif isinstance(output, dict):
-                    images.append(GeneratedImage(
-                        url=output.get("url"),
-                        seed=output.get("seed"),
-                    ))
-
-            # Handle single image response
-            if not images and data.get("sample"):
-                images.append(GeneratedImage(url=data.get("sample")))
-
-            return ImageGenerationResult(
-                images=images,
-                model_used=model,
-                provider="flux",
-                cost_usd=self._get_model_cost(model) * request.num_images,
-                metadata={"raw_response": data},
-            )
-
-        except httpx.TimeoutException:
-            raise GenerationTimeoutError(f"Flux request timed out after {self.timeout}s")
-
-    async def _poll_flux_result(
-        self,
-        task_id: str,
-        max_polls: int = 60,
-        poll_interval: float = 2.0,
-    ) -> Dict[str, Any]:
-        """Poll Flux API for async result."""
-        client = await self._get_client()
-
-        for _ in range(max_polls):
-            try:
-                response = await client.get(
-                    f"https://api.bfl.ml/v1/get_result?id={task_id}",
-                    headers={"X-Key": self.flux_api_key},
-                )
-
-                if response.status_code != 200:
-                    raise ProviderError(f"Flux poll error ({response.status_code})")
-
-                data = response.json()
-                status = data.get("status")
-
-                if status == "Ready":
-                    return data.get("result", data)
-                elif status == "Error":
-                    raise ProviderError(f"Flux generation failed: {data.get('error')}")
-
-                await asyncio.sleep(poll_interval)
-
-            except httpx.TimeoutException:
-                await asyncio.sleep(poll_interval)
-
-        raise GenerationTimeoutError("Flux polling timed out")
 
     async def estimate_cost(
         self,

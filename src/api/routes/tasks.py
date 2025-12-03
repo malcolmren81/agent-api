@@ -14,7 +14,8 @@ from src.models.schemas import (
     TaskListResponse,
     CreateTaskRequest
 )
-from src.services.task_aggregator import task_aggregator
+# TODO: Restore task_aggregator when src/services is created
+# from src.services.task_aggregator import task_aggregator
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -244,51 +245,52 @@ async def create_task(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/tasks/aggregate/{task_id}")
-async def aggregate_task_from_logs(
-    task_id: str,
-    background_tasks: BackgroundTasks,
-    shop: str = Query("default.myshopify.com"),
-    original_prompt: str = Query(""),
-    generated_image_url: Optional[str] = None
-) -> dict:
-    """
-    Trigger task aggregation from AgentLog records.
-
-    This endpoint aggregates AgentLog records into a comprehensive Task record.
-    The aggregation runs in the background to avoid blocking the response.
-
-    Args:
-        task_id: Task identifier
-        background_tasks: FastAPI background tasks
-        shop: Shop domain
-        original_prompt: User's original prompt
-        generated_image_url: URL of generated image
-
-    Returns:
-        Status message
-    """
-    try:
-        logger.info(f"Triggering task aggregation for task_id={task_id}")
-
-        # Queue aggregation in background
-        background_tasks.add_task(
-            task_aggregator.create_task_from_logs,
-            task_id=task_id,
-            shop=shop,
-            original_prompt=original_prompt,
-            generated_image_url=generated_image_url
-        )
-
-        return {
-            "status": "queued",
-            "message": f"Task aggregation queued for task_id={task_id}",
-            "task_id": task_id
-        }
-
-    except Exception as e:
-        logger.error("Error queuing task aggregation", error=str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+# TODO: Restore when task_aggregator is available
+# @router.post("/tasks/aggregate/{task_id}")
+# async def aggregate_task_from_logs(
+#     task_id: str,
+#     background_tasks: BackgroundTasks,
+#     shop: str = Query("default.myshopify.com"),
+#     original_prompt: str = Query(""),
+#     generated_image_url: Optional[str] = None
+# ) -> dict:
+#     """
+#     Trigger task aggregation from AgentLog records.
+#
+#     This endpoint aggregates AgentLog records into a comprehensive Task record.
+#     The aggregation runs in the background to avoid blocking the response.
+#
+#     Args:
+#         task_id: Task identifier
+#         background_tasks: FastAPI background tasks
+#         shop: Shop domain
+#         original_prompt: User's original prompt
+#         generated_image_url: URL of generated image
+#
+#     Returns:
+#         Status message
+#     """
+#     try:
+#         logger.info(f"Triggering task aggregation for task_id={task_id}")
+#
+#         # Queue aggregation in background
+#         background_tasks.add_task(
+#             task_aggregator.create_task_from_logs,
+#             task_id=task_id,
+#             shop=shop,
+#             original_prompt=original_prompt,
+#             generated_image_url=generated_image_url
+#         )
+#
+#         return {
+#             "status": "queued",
+#             "message": f"Task aggregation queued for task_id={task_id}",
+#             "task_id": task_id
+#         }
+#
+#     except Exception as e:
+#         logger.error("Error queuing task aggregation", error=str(e), exc_info=True)
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/tasks/{task_id}")

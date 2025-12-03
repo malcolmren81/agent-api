@@ -4,6 +4,9 @@ Pali Agent - User-facing orchestrator.
 This agent handles direct user interaction, gathers requirements through
 multi-turn conversation, and coordinates with other agents to complete tasks.
 
+Refactored to delegate to RequirementsAnalysisService for extraction logic
+while maintaining orchestration responsibilities.
+
 Documentation Reference: Section 5.2.1
 """
 
@@ -16,6 +19,13 @@ from palet8_agents.core.config import get_config, get_model_profile
 from palet8_agents.tools.base import BaseTool
 
 from palet8_agents.services.text_llm_service import TextLLMService, TextLLMServiceError
+from palet8_agents.services.requirements_analysis_service import (
+    RequirementsAnalysisService,
+    RequirementsAnalysisError,
+)
+
+# Import RequirementsStatus from models package
+from palet8_agents.models import RequirementsStatus
 
 logger = logging.getLogger(__name__)
 
@@ -69,78 +79,6 @@ TONE
 Be the creative partner users enjoy working with. Make the design process feel easy and fun."""
 
 
-class RequirementsStatus:
-    """Status of requirements gathering."""
-
-    def __init__(self):
-        self.subject: Optional[str] = None
-        self.style: Optional[str] = None
-        self.colors: List[str] = []
-        self.mood: Optional[str] = None
-        self.composition: Optional[str] = None
-        self.include_elements: List[str] = []
-        self.avoid_elements: List[str] = []
-        self.reference_image: Optional[str] = None
-        self.additional_notes: Optional[str] = None
-
-    @property
-    def completeness_score(self) -> float:
-        """
-        Calculate how complete the requirements are (0.0 to 1.0).
-
-        Note: This is a basic score for UI feedback only.
-        Planner Agent does the thorough "Enough Context?" check.
-        """
-        score = 0.0
-        if self.subject:
-            score += 0.5
-        if self.style:
-            score += 0.2
-        if self.colors:
-            score += 0.15
-        if self.mood:
-            score += 0.15
-        return min(1.0, score)
-
-    @property
-    def is_complete(self) -> bool:
-        """
-        Check if minimum requirements are met to pass to Planner.
-
-        Pali only checks: Does user have a subject/intent?
-        Planner does the thorough "Enough Context?" evaluation.
-        """
-        return self.subject is not None
-
-    @property
-    def missing_fields(self) -> List[str]:
-        """Get list of missing required/recommended fields."""
-        missing = []
-        if not self.subject:
-            missing.append("subject")
-        if not self.style:
-            missing.append("style")
-        if not self.colors:
-            missing.append("colors")
-        return missing
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "subject": self.subject,
-            "style": self.style,
-            "colors": self.colors,
-            "mood": self.mood,
-            "composition": self.composition,
-            "include_elements": self.include_elements,
-            "avoid_elements": self.avoid_elements,
-            "reference_image": self.reference_image,
-            "additional_notes": self.additional_notes,
-            "completeness_score": self.completeness_score,
-            "is_complete": self.is_complete,
-        }
-
-
 class PaliAgent(BaseAgent):
     """
     User-facing orchestrator agent.
@@ -156,8 +94,16 @@ class PaliAgent(BaseAgent):
         self,
         tools: Optional[List[BaseTool]] = None,
         text_service: Optional[TextLLMService] = None,
+        requirements_service: Optional[RequirementsAnalysisService] = None,
     ):
-        """Initialize the Pali Agent."""
+        """
+        Initialize the Pali Agent.
+
+        Args:
+            tools: Optional list of tools for the agent
+            text_service: Optional TextLLMService for response generation
+            requirements_service: Optional RequirementsAnalysisService for requirements extraction
+        """
         super().__init__(
             name="pali",
             description="User-facing orchestrator for requirement gathering and task coordination",
@@ -165,7 +111,9 @@ class PaliAgent(BaseAgent):
         )
 
         self._text_service = text_service
-        self._owns_service = text_service is None
+        self._owns_text_service = text_service is None
+        self._requirements_service = requirements_service
+        self._owns_requirements_service = requirements_service is None
 
         self.system_prompt = PALI_SYSTEM_PROMPT
         self.model_profile = "pali"
@@ -178,9 +126,24 @@ class PaliAgent(BaseAgent):
             self._text_service = TextLLMService(default_profile_name=self.model_profile)
         return self._text_service
 
+    async def _get_requirements_service(self) -> RequirementsAnalysisService:
+        """Get or create requirements analysis service."""
+        if self._requirements_service is None:
+            # Share text service with requirements service for efficiency
+            text_service = await self._get_text_service()
+            self._requirements_service = RequirementsAnalysisService(text_service=text_service)
+            self._owns_requirements_service = True
+        return self._requirements_service
+
     async def close(self) -> None:
         """Close resources."""
-        if self._text_service and self._owns_service:
+        # Close requirements service first (if we own it)
+        if self._requirements_service and self._owns_requirements_service:
+            await self._requirements_service.close()
+            self._requirements_service = None
+
+        # Close text service
+        if self._text_service and self._owns_text_service:
             await self._text_service.close()
             self._text_service = None
 
@@ -288,31 +251,16 @@ class PaliAgent(BaseAgent):
         """
         Validate user input.
 
+        Delegates to RequirementsAnalysisService for consistent validation.
+
         Args:
             user_input: Raw user input
 
         Returns:
             Validation result with is_valid flag and any issues
         """
-        issues = []
-
-        # Check for empty input
-        if not user_input or not user_input.strip():
-            issues.append("Input cannot be empty")
-            return {"is_valid": False, "issues": issues}
-
-        # Check minimum length
-        if len(user_input.strip()) < 3:
-            issues.append("Input is too short")
-
-        # Check maximum length
-        if len(user_input) > 10000:
-            issues.append("Input is too long (max 10000 characters)")
-
-        # TODO: Add English language detection if needed
-        # TODO: Add safety pre-check (defer to Safety Agent for detailed check)
-
-        return {"is_valid": len(issues) == 0, "issues": issues}
+        requirements_service = await self._get_requirements_service()
+        return requirements_service.validate_input(user_input)
 
     async def analyze_requirements(
         self,
@@ -322,6 +270,8 @@ class PaliAgent(BaseAgent):
         """
         Analyze conversation to extract requirements.
 
+        Delegates to RequirementsAnalysisService for LLM-based extraction.
+
         Args:
             context: Current execution context
             conversation: Conversation history
@@ -329,61 +279,22 @@ class PaliAgent(BaseAgent):
         Returns:
             RequirementsStatus with extracted information
         """
-        status = RequirementsStatus()
+        requirements_service = await self._get_requirements_service()
 
-        # Get existing requirements from context
-        if context.requirements:
-            status.subject = context.requirements.get("subject")
-            status.style = context.requirements.get("style")
-            status.colors = context.requirements.get("colors", [])
-            status.mood = context.requirements.get("mood")
+        # Get existing requirements from context to merge
+        existing_requirements = context.requirements if context.requirements else None
 
-        # Use LLM to extract requirements from conversation
-        if len(conversation.messages) > 0:
-            text_service = await self._get_text_service()
-
-            conversation_text = "\n".join([
-                f"{msg.role.value}: {msg.content}"
-                for msg in conversation.messages
-            ])
-
-            system_prompt = """Extract design requirements from this conversation.
-Return a JSON object with these fields (null if not mentioned):
-{
-    "subject": "main subject/concept",
-    "style": "visual style",
-    "colors": ["list", "of", "colors"],
-    "mood": "emotional tone",
-    "composition": "composition notes",
-    "include_elements": ["elements to include"],
-    "avoid_elements": ["elements to avoid"]
-}
-Return ONLY valid JSON."""
-
-            try:
-                result = await text_service.generate_text(
-                    prompt=f"Conversation:\n{conversation_text}\n\nExtract requirements:",
-                    system_prompt=system_prompt,
-                    temperature=0.2,
-                )
-
-                import json
-                try:
-                    extracted = json.loads(result.content.strip())
-                    status.subject = extracted.get("subject") or status.subject
-                    status.style = extracted.get("style") or status.style
-                    status.colors = extracted.get("colors") or status.colors
-                    status.mood = extracted.get("mood") or status.mood
-                    status.composition = extracted.get("composition") or status.composition
-                    status.include_elements = extracted.get("include_elements", [])
-                    status.avoid_elements = extracted.get("avoid_elements", [])
-                except json.JSONDecodeError:
-                    logger.warning("Failed to parse requirements extraction response")
-
-            except TextLLMServiceError as e:
-                logger.warning(f"Requirements extraction failed: {e}")
-
-        return status
+        # Use service to analyze conversation
+        try:
+            status = await requirements_service.analyze_conversation(
+                conversation=conversation,
+                existing_requirements=existing_requirements,
+            )
+            return status
+        except RequirementsAnalysisError as e:
+            logger.warning(f"Requirements analysis failed: {e}")
+            # Return empty status on error
+            return RequirementsStatus()
 
     async def generate_response(
         self,

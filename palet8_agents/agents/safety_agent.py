@@ -7,8 +7,6 @@ safety violations in a non-blocking, event-driven manner.
 Documentation Reference: Section 5.2.4
 """
 
-from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 import logging
@@ -20,6 +18,15 @@ from palet8_agents.core.config import get_config
 from palet8_agents.tools.base import BaseTool
 
 from palet8_agents.services.text_llm_service import TextLLMService, TextLLMServiceError
+from palet8_agents.services.safety_classification_service import SafetyClassificationService
+
+# Import from models package (refactored - no longer using inline classes)
+from palet8_agents.models import (
+    SafetyCategory,
+    SafetySeverity,
+    SafetyFlag,
+    SafetyResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,70 +80,11 @@ Produce structured safety signals (flags with category, severity, short explanat
 Your outputs are guidance for other agents and the orchestration layer; you never respond directly to the user. Pali handles all user communication."""
 
 
-class SafetyCategory(Enum):
-    """Safety violation categories."""
-    NSFW = "nsfw"
-    VIOLENCE = "violence"
-    HATE = "hate"
-    IP_TRADEMARK = "ip_trademark"
-    ILLEGAL = "illegal"
-
-
-class SafetySeverity(Enum):
-    """Severity levels for safety issues."""
-    NONE = "none"
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-
-@dataclass
-class SafetyFlag:
-    """A safety flag raised during monitoring."""
-    category: SafetyCategory
-    severity: SafetySeverity
-    score: float
-    description: str
-    source: str  # Where the issue was detected (input, prompt, image, etc.)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "category": self.category.value,
-            "severity": self.severity.value,
-            "score": self.score,
-            "description": self.description,
-            "source": self.source,
-            "metadata": self.metadata,
-        }
-
-
-@dataclass
-class SafetyResult:
-    """Accumulated safety result for a job."""
-    job_id: str
-    is_safe: bool
-    overall_score: float  # 0.0 = unsafe, 1.0 = safe
-    flags: List[SafetyFlag] = field(default_factory=list)
-    blocked_categories: List[str] = field(default_factory=list)
-    user_message: Optional[str] = None  # Message to show user if blocked
-    alternatives: List[str] = field(default_factory=list)  # Suggested alternatives
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "job_id": self.job_id,
-            "is_safe": self.is_safe,
-            "overall_score": self.overall_score,
-            "flags": [f.to_dict() for f in self.flags],
-            "blocked_categories": self.blocked_categories,
-            "user_message": self.user_message,
-            "alternatives": self.alternatives,
-            "metadata": self.metadata,
-        }
+# =============================================================================
+# NOTE: Data classes (SafetyCategory, SafetySeverity, SafetyFlag, SafetyResult)
+# have been moved to palet8_agents.models package.
+# Import them from there for consistency.
+# =============================================================================
 
 
 class SafetyAgent(BaseAgent):
@@ -165,9 +113,18 @@ class SafetyAgent(BaseAgent):
         self,
         tools: Optional[List[BaseTool]] = None,
         text_service: Optional[TextLLMService] = None,
+        safety_classification_service: Optional[SafetyClassificationService] = None,
         config_path: Optional[Path] = None,
     ):
-        """Initialize the Safety Agent."""
+        """
+        Initialize the Safety Agent.
+
+        Args:
+            tools: Optional list of tools for the agent
+            text_service: Optional TextLLMService for LLM calls
+            safety_classification_service: Optional SafetyClassificationService for classification
+            config_path: Optional path to safety config YAML file
+        """
         super().__init__(
             name="safety",
             description="Content safety monitoring agent (non-blocking, continuous)",
@@ -175,7 +132,11 @@ class SafetyAgent(BaseAgent):
         )
 
         self._text_service = text_service
-        self._owns_service = text_service is None
+        self._safety_classification_service = safety_classification_service
+        self._owns_services = {
+            "text": text_service is None,
+            "safety_classification": safety_classification_service is None,
+        }
 
         # System prompt
         self.system_prompt = SAFETY_SYSTEM_PROMPT
@@ -240,9 +201,24 @@ class SafetyAgent(BaseAgent):
             self._text_service = TextLLMService(default_profile_name=self.model_profile)
         return self._text_service
 
+    async def _get_safety_classification_service(self) -> SafetyClassificationService:
+        """Get or create safety classification service."""
+        if self._safety_classification_service is None:
+            text_service = await self._get_text_service()
+            self._safety_classification_service = SafetyClassificationService(
+                text_service=text_service,
+                config_path=self._config_path,
+            )
+        return self._safety_classification_service
+
     async def close(self) -> None:
         """Close resources."""
-        if self._text_service and self._owns_service:
+        # Close classification service first (it may depend on text service)
+        if self._safety_classification_service and self._owns_services["safety_classification"]:
+            await self._safety_classification_service.close()
+            self._safety_classification_service = None
+
+        if self._text_service and self._owns_services["text"]:
             await self._text_service.close()
             self._text_service = None
 

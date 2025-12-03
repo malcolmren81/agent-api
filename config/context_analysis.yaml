@@ -1,0 +1,78 @@
+# =============================================================================
+# Context Analysis Configuration
+# =============================================================================
+# Configuration for PlannerAgent context completeness evaluation.
+# Controls which fields are required, how completeness is scored, and thresholds.
+# =============================================================================
+
+version: "1.0"
+
+# =============================================================================
+# Field Categories
+# =============================================================================
+# Required: Must be present to proceed with planning
+# Important: Contribute significantly to completeness score
+# Optional: Nice to have, small score contribution
+# =============================================================================
+fields:
+  required:
+    - subject        # Main subject/concept - absolutely required
+
+  important:
+    - style          # Visual style (realistic, cartoon, etc.)
+    - aesthetic      # Aesthetic feeling/mood
+    - colors         # Color preferences
+    - product_type   # Target product for design
+
+  optional:
+    - mood           # Emotional tone
+    - composition    # Layout/arrangement
+    - background     # Background preferences
+    - lighting       # Lighting style
+
+# =============================================================================
+# Completeness Weights
+# =============================================================================
+# Weights for calculating context completeness score (0.0 to 1.0)
+# =============================================================================
+completeness_weights:
+  subject: 0.40       # Most critical - design can't proceed without it
+  style: 0.15         # Important for visual direction
+  aesthetic: 0.15     # Important for overall feel
+  colors: 0.10        # Helps constrain output
+  product_type: 0.10  # Affects technical constraints
+  mood: 0.05          # Nice to have
+  composition: 0.05   # Nice to have
+
+# =============================================================================
+# Thresholds
+# =============================================================================
+thresholds:
+  min_completeness: 0.5       # Minimum score to proceed with planning
+  min_prompt_quality: 0.45    # Minimum prompt quality score
+  max_prompt_revisions: 3     # Max attempts to improve prompt
+  max_fix_iterations: 3       # Max fix plan attempts after evaluation rejection
+
+# =============================================================================
+# RAG Configuration
+# =============================================================================
+# Settings for knowledge retrieval (user history, art library, similar designs)
+# =============================================================================
+rag:
+  min_context_items: 2         # Minimum combined refs/prompts before web search
+  web_search_max_results: 3    # Max web search results to include
+
+# =============================================================================
+# Clarifying Questions
+# =============================================================================
+# Template questions for missing fields
+# =============================================================================
+clarifying_questions:
+  subject: "What would you like the image to show? Please describe the main subject."
+  style: "What style are you looking for? (e.g., realistic, cartoon, minimalist)"
+  aesthetic: "What aesthetic or visual style do you prefer?"
+  colors: "Do you have any color preferences for this design?"
+  product_type: "What product is this design for? (e.g., t-shirt, poster, phone case)"
+  mood: "What mood or feeling should the image convey?"
+  composition: "How would you like the elements arranged in the image?"
+  background: "What kind of background would you prefer?"

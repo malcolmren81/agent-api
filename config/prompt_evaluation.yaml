@@ -1,0 +1,125 @@
+# =============================================================================
+# Prompt Quality Evaluation Configuration
+# =============================================================================
+# Configuration for assessing prompt quality before image generation.
+# Weights and thresholds vary by mode (RELAX/STANDARD/COMPLEX).
+# =============================================================================
+
+version: "1.0"
+
+# =============================================================================
+# Dimension Weights by Mode
+# =============================================================================
+# How much each dimension contributes to overall prompt quality score
+# =============================================================================
+weights:
+  RELAX:
+    coverage: 0.30              # Required elements present
+    clarity: 0.25               # Clear, unambiguous language
+    product_constraints: 0.20   # Print/product requirements
+    style_alignment: 0.10       # Style consistency
+    control_surface: 0.15       # Negative prompt quality
+
+  STANDARD:
+    coverage: 0.25
+    clarity: 0.25
+    product_constraints: 0.20
+    style_alignment: 0.15
+    control_surface: 0.15
+
+  COMPLEX:
+    coverage: 0.22
+    clarity: 0.17
+    product_constraints: 0.22
+    style_alignment: 0.22
+    control_surface: 0.17
+
+# =============================================================================
+# Thresholds by Mode
+# =============================================================================
+# Minimum scores required for each dimension and overall
+# =============================================================================
+thresholds:
+  RELAX:
+    overall: 0.50
+    coverage: 0.50
+    clarity: 0.40
+    product_constraints: 0.40
+    style_alignment: 0.30
+    control_surface: 0.30
+
+  STANDARD:
+    overall: 0.70
+    coverage: 0.70
+    clarity: 0.60
+    product_constraints: 0.60
+    style_alignment: 0.50
+    control_surface: 0.50
+
+  COMPLEX:
+    overall: 0.85
+    coverage: 0.85
+    clarity: 0.75
+    product_constraints: 0.80
+    style_alignment: 0.70
+    control_surface: 0.70
+
+# =============================================================================
+# Required Fields by Mode
+# =============================================================================
+# Dimensions that must be present in prompt for each mode
+# =============================================================================
+required_fields_by_mode:
+  RELAX:
+    - subject
+
+  STANDARD:
+    - subject
+    - aesthetic
+    - background
+
+  COMPLEX:
+    - subject
+    - aesthetic
+    - background
+    - composition
+    - lighting
+
+# =============================================================================
+# Clarity Checks
+# =============================================================================
+# Checks for contradictions, vague terms, and prompt/negative conflicts
+# =============================================================================
+clarity_checks:
+  # Pairs that contradict each other when both present
+  contradiction_pairs:
+    - ["dark", "bright white background"]
+    - ["minimalist", "highly detailed intricate"]
+    - ["simple", "complex elaborate"]
+    - ["muted colors", "vibrant saturated"]
+    - ["vintage", "futuristic modern"]
+
+  # Terms that are too vague and should be replaced
+  vague_terms:
+    - nice
+    - cool
+    - good looking
+    - awesome
+    - great
+    - pretty
+    - beautiful
+    - amazing
+
+  # Score penalties for detected issues
+  penalties:
+    contradiction: -0.3        # Conflicting terms in prompt
+    vague_term: -0.1           # Each vague term
+    negative_contradiction: -0.2  # Same term in positive and negative
+
+# =============================================================================
+# Decision Outcomes
+# =============================================================================
+decisions:
+  PASS: "Prompt quality acceptable, proceed to generation"
+  FIX_REQUIRED: "Prompt needs revision before generation"
+  POLICY_FAIL: "Prompt violates safety policy"
