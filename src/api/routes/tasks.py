@@ -4,7 +4,7 @@ Task API routes.
 Provides endpoints for querying comprehensive task execution logs.
 Tasks aggregate data from AgentLog records for complete pipeline visibility.
 """
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from src.database import prisma
@@ -19,6 +19,80 @@ from src.models.schemas import (
 
 logger = get_logger(__name__)
 router = APIRouter()
+
+
+# Component name mapping for log checkpoints
+STAGE_TO_COMPONENT = {
+    "interactive": "pali",
+    "planner": "planner_v2",
+    "prompt_manager": "react_prompt",
+    "model_selection": "planner_v2",
+    "generation": "assembly",
+    "evaluation": "evaluator_v2",
+    "product_generator": "assembly",
+}
+
+
+def generate_log_checkpoints(stages: List[Dict[str, Any]], task_created_at: datetime) -> List[Dict[str, Any]]:
+    """
+    Generate log checkpoints from stage data.
+
+    Creates structured log checkpoints that represent the pipeline execution flow.
+    """
+    checkpoints = []
+    current_time = task_created_at
+
+    for stage in stages:
+        stage_name = stage.get("stage", "unknown")
+        component = STAGE_TO_COMPONENT.get(stage_name, stage_name)
+        duration = stage.get("duration", 0)
+        status = stage.get("status", "unknown")
+
+        # Start checkpoint
+        checkpoints.append({
+            "event": f"{component}.run.start",
+            "level": "INFO",
+            "timestamp": current_time.isoformat(),
+            "fields": {
+                "stage": stage_name,
+                "model": stage.get("modelName"),
+            },
+            "component": component,
+        })
+
+        # End checkpoint based on status
+        from datetime import timedelta
+        end_time = current_time + timedelta(milliseconds=duration)
+
+        if status == "success":
+            checkpoints.append({
+                "event": f"{component}.run.complete",
+                "level": "INFO",
+                "timestamp": end_time.isoformat(),
+                "fields": {
+                    "stage": stage_name,
+                    "duration_ms": duration,
+                    "credits_used": stage.get("creditsUsed", 0),
+                    "llm_tokens": stage.get("llmTokens"),
+                },
+                "component": component,
+            })
+        elif status == "failed":
+            checkpoints.append({
+                "event": f"{component}.run.error",
+                "level": "ERROR",
+                "timestamp": end_time.isoformat(),
+                "fields": {
+                    "stage": stage_name,
+                    "duration_ms": duration,
+                    "error": stage.get("keyOutput", {}).get("error", "Unknown error"),
+                },
+                "component": component,
+            })
+
+        current_time = end_time
+
+    return checkpoints
 
 
 @router.get("/tasks", response_model=TaskListResponse)
@@ -92,6 +166,7 @@ async def list_tasks(
                 creditsCost=task.creditsCost,
                 performanceBreakdown=task.performanceBreakdown,
                 evaluationResults=task.evaluationResults,
+                logCheckpoints=generate_log_checkpoints(task.stages or [], task.createdAt),
                 generatedImageUrl=task.generatedImageUrl,
                 mockupUrls=task.mockupUrls,
                 finalPrompt=task.finalPrompt,
@@ -153,6 +228,7 @@ async def get_task(task_id: str) -> TaskResponse:
             creditsCost=task.creditsCost,
             performanceBreakdown=task.performanceBreakdown,
             evaluationResults=task.evaluationResults,
+            logCheckpoints=generate_log_checkpoints(task.stages or [], task.createdAt),
             generatedImageUrl=task.generatedImageUrl,
             mockupUrls=task.mockupUrls,
             finalPrompt=task.finalPrompt,
@@ -228,6 +304,7 @@ async def create_task(
             creditsCost=task.creditsCost,
             performanceBreakdown=task.performanceBreakdown,
             evaluationResults=task.evaluationResults,
+            logCheckpoints=generate_log_checkpoints(task.stages or [], task.createdAt),
             generatedImageUrl=task.generatedImageUrl,
             mockupUrls=task.mockupUrls,
             finalPrompt=task.finalPrompt,

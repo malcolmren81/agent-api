@@ -352,6 +352,15 @@ class EvaluationData(BaseModel):
     recommendations: list[str] = Field(default_factory=list, description="Improvement recommendations")
 
 
+class LogCheckpoint(BaseModel):
+    """Structured log checkpoint from pipeline execution."""
+    event: str = Field(..., description="Log event name (e.g., pali.session.start)")
+    level: str = Field(..., description="Log level: INFO, WARNING, ERROR, DEBUG")
+    timestamp: datetime = Field(..., description="When the event occurred")
+    fields: dict[str, Any] = Field(default_factory=dict, description="Event-specific fields")
+    component: str = Field(..., description="Component name (e.g., pali, planner_v2)")
+
+
 class TaskResponse(BaseModel):
     """Comprehensive task execution response."""
     id: str = Field(..., description="Task database ID")
@@ -365,6 +374,7 @@ class TaskResponse(BaseModel):
     creditsCost: int = Field(..., description="Total credits used")
     performanceBreakdown: dict[str, Any] = Field(..., description="Performance metrics")
     evaluationResults: Optional[dict[str, Any]] = Field(None, description="Evaluation data")
+    logCheckpoints: Optional[list[dict[str, Any]]] = Field(None, description="Structured log checkpoints")
     generatedImageUrl: Optional[str] = Field(None, description="Final generated image URL")
     mockupUrls: Optional[list[str]] = Field(None, description="Product mockup URLs")
     finalPrompt: Optional[str] = Field(None, description="Final prompt sent to Flux")

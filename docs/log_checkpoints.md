@@ -115,6 +115,34 @@ All logs automatically include correlation IDs when set:
 
 ---
 
+## React Prompt Agent Logs
+
+**File**: `/palet8_agents/agents/react_prompt_agent.py`
+
+| Event | Level | Fields | Description |
+|-------|-------|--------|-------------|
+| `react_prompt.run.start` | INFO | `job_id`, `phase`, `has_previous_plan` | ReAct loop started |
+| `react_prompt.run.complete` | INFO | `job_id`, `quality_score`, `quality_acceptable`, `steps`, `revision_count`, `mode` | ReAct loop completed |
+| `react_prompt.run.error` | ERROR | `error`, `error_type` | ReAct loop failed |
+| `react_prompt.step.action` | DEBUG | `step`, `action` | Action selected in loop |
+| `react_prompt.context.start` | INFO | `job_id`, `user_id` | Context building started |
+| `react_prompt.context.complete` | INFO | `job_id`, `history_count`, `art_refs_count`, `web_search_used` | Context building completed |
+| `react_prompt.context.web_search_triggered` | INFO | `job_id`, `history_count`, `art_refs_count` | RAG insufficient, web search triggered |
+| `react_prompt.web_search.complete` | INFO | `results_count`, `has_answer`, `provider` | Web search completed |
+| `react_prompt.web_search.failed` | WARNING | `error`, `error_type` | Web search failed |
+| `react_prompt.dimensions.start` | INFO | `job_id`, `mode` | Dimension selection started |
+| `react_prompt.dimensions.complete` | INFO | `job_id`, `subject`, `aesthetic`, `used_fallback` | Dimensions selected |
+| `react_prompt.dimensions.fallback` | WARNING | `job_id`, `subject` | Using fallback dimensions |
+| `react_prompt.compose.start` | INFO | `job_id`, `mode` | Prompt composition started |
+| `react_prompt.compose.complete` | INFO | `job_id`, `prompt_length`, `negative_prompt_length`, `used_fallback` | Prompt composed |
+| `react_prompt.compose.fallback` | WARNING | `job_id`, `error`, `error_type` | Using fallback prompt |
+| `react_prompt.quality.start` | INFO | `job_id`, `prompt_length` | Quality evaluation started |
+| `react_prompt.quality.scored` | INFO | `job_id`, `overall`, `decision`, `threshold`, `failed_dimensions` | Quality scored |
+| `react_prompt.refine.start` | INFO | `job_id`, `revision`, `failed_dimensions` | Prompt refinement started |
+| `react_prompt.refine.complete` | INFO | `job_id`, `revision`, `new_prompt_length` | Prompt refinement completed |
+
+---
+
 ## Assembly Service Logs
 
 **File**: `/palet8_agents/services/assembly_service.py`
@@ -214,7 +242,7 @@ api.request.complete
 ```
 resource.type="cloud_run_revision"
 resource.labels.service_name="palet8-agents"
-jsonPayload.event=~"pali\.|planner_v2\.|evaluator_v2\.|assembly\.|safety\."
+jsonPayload.event=~"pali\.|planner_v2\.|evaluator_v2\.|react_prompt\.|assembly\.|safety\."
 ```
 
 **By job_id:**
@@ -282,5 +310,6 @@ jsonPayload.duration_ms>1000
 | Pali Agent | `/palet8_agents/agents/pali_agent.py` |
 | Planner Agent V2 | `/palet8_agents/agents/planner_agent_v2.py` |
 | Evaluator Agent V2 | `/palet8_agents/agents/evaluator_agent_v2.py` |
+| React Prompt Agent | `/palet8_agents/agents/react_prompt_agent.py` |
 | Assembly Service | `/palet8_agents/services/assembly_service.py` |
 | Safety Agent | `/palet8_agents/agents/safety_agent.py` |

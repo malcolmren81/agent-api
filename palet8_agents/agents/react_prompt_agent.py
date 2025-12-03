@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-import logging
+
+from src.utils.logger import get_logger
 
 from palet8_agents.core.agent import BaseAgent, AgentContext, AgentResult
 from palet8_agents.tools.base import BaseTool, ToolResult
@@ -25,7 +26,7 @@ from palet8_agents.models.planning import PlanningTask, PromptPlan, ContextSumma
 from palet8_agents.models.prompt import PromptDimensions, PromptQualityResult
 from palet8_agents.services.text_llm_service import TextLLMService, TextLLMServiceError
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ReactAction(Enum):
@@ -229,7 +230,12 @@ class ReactPromptAgent(BaseAgent):
                 )
 
             task = PlanningTask.from_dict(planning_task_data)
-            logger.info(f"[{self.name}] Starting ReAct loop for job={task.job_id}, phase={task.phase}")
+            logger.info(
+                "react_prompt.run.start",
+                job_id=task.job_id,
+                phase=task.phase,
+                has_previous_plan=task.previous_plan is not None,
+            )
 
             # Initialize state
             state = self._init_state(task)
@@ -239,7 +245,11 @@ class ReactPromptAgent(BaseAgent):
             while not state.goal_satisfied and steps < self.max_steps:
                 # THINK: Decide next action
                 next_action = await self._think(state, task)
-                logger.debug(f"[{self.name}] Step {steps + 1}: Action={next_action.value}")
+                logger.debug(
+                    "react_prompt.step.action",
+                    step=steps + 1,
+                    action=next_action.value,
+                )
 
                 # ACT: Execute the action
                 if next_action == ReactAction.BUILD_CONTEXT:
@@ -282,8 +292,13 @@ class ReactPromptAgent(BaseAgent):
             context.metadata["prompt_plan"] = prompt_plan.to_dict()
 
             logger.info(
-                f"[{self.name}] Completed: quality={prompt_plan.quality_score:.2f}, "
-                f"acceptable={prompt_plan.quality_acceptable}, steps={steps}"
+                "react_prompt.run.complete",
+                job_id=task.job_id,
+                quality_score=round(prompt_plan.quality_score, 2),
+                quality_acceptable=prompt_plan.quality_acceptable,
+                steps=steps,
+                revision_count=prompt_plan.revision_count,
+                mode=prompt_plan.mode,
             )
 
             return self._create_result(
@@ -293,7 +308,12 @@ class ReactPromptAgent(BaseAgent):
             )
 
         except Exception as e:
-            logger.error(f"[{self.name}] Error in ReAct loop: {e}", exc_info=True)
+            logger.error(
+                "react_prompt.run.error",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
             return self._create_result(
                 success=False,
                 data=None,
@@ -377,7 +397,11 @@ class ReactPromptAgent(BaseAgent):
         3. If NOT sufficient → supplement with web search
         4. Return combined context
         """
-        logger.debug(f"[{self.name}] Building context for user={task.user_id}")
+        logger.info(
+            "react_prompt.context.start",
+            job_id=task.job_id,
+            user_id=task.user_id,
+        )
 
         # Step 1: Get user history from memory
         result = await self.call_tool(
@@ -403,11 +427,22 @@ class ReactPromptAgent(BaseAgent):
 
         # Step 3: Check if RAG context is sufficient
         if self._is_rag_context_sufficient(task, state):
-            logger.debug(f"[{self.name}] RAG context sufficient, skipping web search")
+            logger.info(
+                "react_prompt.context.complete",
+                job_id=task.job_id,
+                history_count=len(state.user_history),
+                art_refs_count=len(state.art_references),
+                web_search_used=False,
+            )
             return state
 
         # Step 4: RAG context insufficient - supplement with web search
-        logger.info(f"[{self.name}] RAG context insufficient, supplementing with web search")
+        logger.info(
+            "react_prompt.context.web_search_triggered",
+            job_id=task.job_id,
+            history_count=len(state.user_history),
+            art_refs_count=len(state.art_references),
+        )
         state = await self._supplement_with_web_search(task, state)
 
         return state
@@ -492,18 +527,29 @@ class ReactPromptAgent(BaseAgent):
                 # Add to RAG sources for tracking
                 state.rag_sources.append(f"web_search:{result.data.get('provider', 'unknown')}")
 
-                logger.debug(
-                    f"[{self.name}] Web search returned {len(state.web_results)} results"
+                logger.info(
+                    "react_prompt.web_search.complete",
+                    results_count=len(state.web_results),
+                    has_answer=state.web_answer is not None,
+                    provider=result.data.get("provider", "unknown"),
                 )
 
         except Exception as e:
-            logger.warning(f"[{self.name}] Web search failed: {e}")
+            logger.warning(
+                "react_prompt.web_search.failed",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
 
         return state
 
     async def _select_dimensions(self, task: PlanningTask, state: PromptState) -> PromptState:
         """Select dimensions using DimensionTool."""
-        logger.debug(f"[{self.name}] Selecting dimensions for mode={state.mode}")
+        logger.info(
+            "react_prompt.dimensions.start",
+            job_id=task.job_id,
+            mode=state.mode,
+        )
 
         result = await self.call_tool(
             "dimension",
@@ -516,6 +562,13 @@ class ReactPromptAgent(BaseAgent):
 
         if result.success and result.data:
             state.dimensions = PromptDimensions.from_dict(result.data)
+            logger.info(
+                "react_prompt.dimensions.complete",
+                job_id=task.job_id,
+                subject=state.dimensions.subject,
+                aesthetic=state.dimensions.aesthetic,
+                used_fallback=False,
+            )
         else:
             # Fallback to basic dimensions from requirements
             state.dimensions = PromptDimensions(
@@ -525,12 +578,21 @@ class ReactPromptAgent(BaseAgent):
             )
             if task.requirements.get("colors"):
                 state.dimensions.color = ", ".join(task.requirements["colors"])
+            logger.warning(
+                "react_prompt.dimensions.fallback",
+                job_id=task.job_id,
+                subject=state.dimensions.subject,
+            )
 
         return state
 
     async def _compose_prompt(self, task: PlanningTask, state: PromptState) -> PromptState:
         """Compose prompt using PromptComposerService."""
-        logger.debug(f"[{self.name}] Composing prompt")
+        logger.info(
+            "react_prompt.compose.start",
+            job_id=task.job_id,
+            mode=state.mode,
+        )
 
         try:
             composer = await self._get_prompt_composer()
@@ -563,9 +625,21 @@ class ReactPromptAgent(BaseAgent):
 
             state.prompt = result.positive_prompt
             state.negative_prompt = result.negative_prompt
+            logger.info(
+                "react_prompt.compose.complete",
+                job_id=task.job_id,
+                prompt_length=len(state.prompt),
+                negative_prompt_length=len(state.negative_prompt),
+                used_fallback=False,
+            )
 
         except Exception as e:
-            logger.warning(f"[{self.name}] Composer failed, using fallback: {e}")
+            logger.warning(
+                "react_prompt.compose.fallback",
+                job_id=task.job_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             # Fallback to simple template
             state.prompt = self._build_fallback_prompt(state)
             state.negative_prompt = self._build_fallback_negative()
@@ -577,7 +651,11 @@ class ReactPromptAgent(BaseAgent):
 
     async def _evaluate_prompt(self, task: PlanningTask, state: PromptState) -> PromptState:
         """Evaluate prompt quality using PromptQualityTool."""
-        logger.debug(f"[{self.name}] Evaluating prompt quality")
+        logger.info(
+            "react_prompt.quality.start",
+            job_id=task.job_id,
+            prompt_length=len(state.prompt),
+        )
 
         result = await self.call_tool(
             "prompt_quality",
@@ -601,11 +679,25 @@ class ReactPromptAgent(BaseAgent):
                 decision="PASS" if len(state.prompt) > 20 else "FIX_REQUIRED",
             )
 
+        logger.info(
+            "react_prompt.quality.scored",
+            job_id=task.job_id,
+            overall=state.quality.overall,
+            decision=state.quality.decision,
+            threshold=state.quality.threshold,
+            failed_dimensions=state.quality.failed_dimensions,
+        )
+
         return state
 
     async def _refine_prompt(self, task: PlanningTask, state: PromptState) -> PromptState:
         """Refine prompt based on quality feedback."""
-        logger.debug(f"[{self.name}] Refining prompt (revision {state.revision_count + 1})")
+        logger.info(
+            "react_prompt.refine.start",
+            job_id=task.job_id,
+            revision=state.revision_count + 1,
+            failed_dimensions=state.quality.failed_dimensions if state.quality else [],
+        )
 
         # Store previous prompt for history
         state.revision_history.append(state.prompt)
@@ -634,6 +726,13 @@ class ReactPromptAgent(BaseAgent):
 
         state.revision_count += 1
         state.quality = None  # Reset for re-evaluation
+
+        logger.info(
+            "react_prompt.refine.complete",
+            job_id=task.job_id,
+            revision=state.revision_count,
+            new_prompt_length=len(state.prompt),
+        )
 
         return state
 
