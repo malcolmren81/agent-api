@@ -94,6 +94,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Request/response logging middleware with correlation ID tracking
+from src.api.middleware import LoggingMiddleware
+app.add_middleware(LoggingMiddleware)
+
 
 # Exception handlers
 @app.exception_handler(Exception)

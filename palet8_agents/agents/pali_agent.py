@@ -11,7 +11,8 @@ Documentation Reference: Section 5.2.1
 """
 
 from typing import Any, Dict, List, Optional
-import logging
+
+from src.utils.logger import get_logger, set_correlation_context
 
 from palet8_agents.core.agent import BaseAgent, AgentContext, AgentResult, AgentState
 from palet8_agents.core.message import Conversation, Message, MessageRole
@@ -27,7 +28,7 @@ from palet8_agents.services.requirements_analysis_service import (
 # Import RequirementsStatus from models package
 from palet8_agents.models import RequirementsStatus
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 PALI_SYSTEM_PROMPT = """You are Pali, the friendly design assistant for Palet8's print-on-demand platform.
@@ -166,11 +167,36 @@ class PaliAgent(BaseAgent):
         """
         self._start_execution()
 
+        # Set correlation context for all downstream logs
+        set_correlation_context(
+            job_id=context.job_id,
+            user_id=context.user_id,
+            conversation_id=conversation.id if conversation else None,
+        )
+
+        logger.info(
+            "pali.session.start",
+            has_input=user_input is not None,
+            input_length=len(user_input) if user_input else 0,
+            has_conversation=conversation is not None,
+        )
+
         try:
             # Validate user input
             if user_input:
                 validation = await self.validate_input(user_input)
+
+                logger.info(
+                    "pali.input.validated",
+                    is_valid=validation["is_valid"],
+                    issues_count=len(validation.get("issues", [])),
+                )
+
                 if not validation["is_valid"]:
+                    logger.warning(
+                        "pali.input.validation_failed",
+                        issues=validation["issues"],
+                    )
                     return self._create_result(
                         success=False,
                         data={"issues": validation["issues"]},
@@ -196,9 +222,24 @@ class PaliAgent(BaseAgent):
             # Check if requirements are complete
             requirements_status = await self.analyze_requirements(context, conversation)
 
+            logger.info(
+                "pali.requirements.analyzed",
+                is_complete=requirements_status.is_complete,
+                missing_count=len(requirements_status.missing_fields),
+                missing_fields=requirements_status.missing_fields[:5],
+                subject=requirements_status.subject,
+            )
+
             if requirements_status.is_complete:
                 # Requirements complete - delegate to Planner
                 context.requirements = requirements_status.to_dict()
+
+                logger.info(
+                    "pali.delegation.triggered",
+                    next_agent="planner",
+                    subject=requirements_status.subject,
+                    style=requirements_status.style,
+                )
 
                 return self._create_result(
                     success=True,
@@ -219,6 +260,12 @@ class PaliAgent(BaseAgent):
                     content=response,
                 ))
 
+                logger.info(
+                    "pali.clarification.requested",
+                    missing_fields=requirements_status.missing_fields,
+                    response_length=len(response),
+                )
+
                 return self._create_result(
                     success=True,
                     data={
@@ -231,7 +278,11 @@ class PaliAgent(BaseAgent):
                 )
 
         except TextLLMServiceError as e:
-            logger.error(f"Text LLM service error in Pali Agent: {e}")
+            logger.error(
+                "pali.run.llm_error",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             return self._create_result(
                 success=False,
                 data=None,
@@ -239,7 +290,12 @@ class PaliAgent(BaseAgent):
                 error_code="LLM_ERROR",
             )
         except Exception as e:
-            logger.error(f"Unexpected error in Pali Agent: {e}", exc_info=True)
+            logger.error(
+                "pali.run.error",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
             return self._create_result(
                 success=False,
                 data=None,
@@ -292,7 +348,11 @@ class PaliAgent(BaseAgent):
             )
             return status
         except RequirementsAnalysisError as e:
-            logger.warning(f"Requirements analysis failed: {e}")
+            logger.warning(
+                "pali.requirements.analysis_error",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             # Return empty status on error
             return RequirementsStatus()
 
@@ -340,7 +400,11 @@ class PaliAgent(BaseAgent):
             return result.content.strip()
 
         except TextLLMServiceError as e:
-            logger.error(f"Response generation failed: {e}")
+            logger.error(
+                "pali.response.generation_error",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             # Fallback response
             if missing:
                 return f"I'd love to help you create something amazing! Could you tell me more about what you'd like the main subject of your design to be?"
@@ -378,6 +442,12 @@ class PaliAgent(BaseAgent):
             """Emit status update if callback provided."""
             if on_status:
                 await on_status(stage, progress)
+
+        logger.info(
+            "pali.chat_turn.start",
+            message_length=len(user_message),
+            has_conversation=conversation is not None,
+        )
 
         try:
             # Emit understanding status
@@ -426,6 +496,13 @@ class PaliAgent(BaseAgent):
                 if requirements_status.mood:
                     summary_message += f" with a {requirements_status.mood} mood"
 
+                logger.info(
+                    "pali.chat_turn.complete",
+                    action="delegate_to_planner",
+                    subject=requirements_status.subject,
+                    style=requirements_status.style,
+                )
+
                 return {
                     "success": True,
                     "message": summary_message,
@@ -457,7 +534,12 @@ class PaliAgent(BaseAgent):
             }
 
         except Exception as e:
-            logger.error(f"Chat turn error: {e}", exc_info=True)
+            logger.error(
+                "pali.chat_turn.error",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
             return {
                 "success": False,
                 "message": "I'm sorry, something went wrong. Could you try again?",

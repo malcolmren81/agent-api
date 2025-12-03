@@ -17,7 +17,8 @@ Documentation Reference: Section 5.2.2
 """
 
 from typing import Any, Dict, List, Optional
-import logging
+
+from src.utils.logger import get_logger, set_correlation_context
 
 from palet8_agents.core.agent import BaseAgent, AgentContext, AgentResult
 from palet8_agents.tools.base import BaseTool
@@ -39,7 +40,7 @@ from palet8_agents.services.context_analysis_service import ContextAnalysisServi
 from palet8_agents.services.model_selection_service import ModelSelectionService
 from palet8_agents.services.safety_classification_service import SafetyClassificationService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 PLANNER_SYSTEM_PROMPT = """You are the **Planner** for Palet8's image generation system.
@@ -257,8 +258,20 @@ class PlannerAgentV2(BaseAgent):
         """
         self._start_execution()
 
+        # Set correlation context for all downstream logs
+        set_correlation_context(
+            job_id=context.job_id,
+            user_id=context.user_id,
+        )
+
+        logger.info(
+            "planner_v2.run.start",
+            phase=phase,
+            has_feedback=evaluation_feedback is not None,
+            requirements_count=len(context.requirements or {}),
+        )
+
         try:
-            logger.info(f"[{self.name}] Starting phase={phase}, job_id={context.job_id}")
 
             if phase == "initial":
                 return await self._handle_initial(context)
@@ -277,7 +290,13 @@ class PlannerAgentV2(BaseAgent):
                 )
 
         except Exception as e:
-            logger.error(f"[{self.name}] Error: {e}", exc_info=True)
+            logger.error(
+                "planner_v2.run.error",
+                phase=phase,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
             return self._create_result(
                 success=False,
                 data=None,
@@ -299,13 +318,25 @@ class PlannerAgentV2(BaseAgent):
         4. Delegate to ReactPromptAgent
         """
         requirements = context.requirements or {}
-        logger.debug(f"[{self.name}] Initial phase with requirements: {list(requirements.keys())}")
 
         # STEP 1: Context Completeness Check - PLANNER DECIDES
         completeness = await self._evaluate_context_completeness(requirements)
 
+        logger.info(
+            "planner_v2.context.evaluated",
+            score=completeness.score,
+            is_sufficient=self._is_context_sufficient(completeness),
+            missing_count=len(completeness.missing_fields),
+            missing_fields=completeness.missing_fields[:5],
+        )
+
         if not self._is_context_sufficient(completeness):
-            logger.info(f"[{self.name}] Context insufficient (score={completeness.score:.2f})")
+            logger.info(
+                "planner_v2.context.insufficient",
+                score=completeness.score,
+                missing_fields=completeness.missing_fields,
+                questions_count=len(completeness.clarifying_questions),
+            )
             return self._create_result(
                 success=True,
                 data={
@@ -320,8 +351,20 @@ class PlannerAgentV2(BaseAgent):
         # STEP 2: Safety Check - PLANNER DECIDES
         safety = await self._classify_safety(requirements)
 
+        logger.info(
+            "planner_v2.safety.classified",
+            is_safe=self._is_safe_to_proceed(safety),
+            risk_level=safety.risk_level,
+            requires_review=safety.requires_review,
+            categories=safety.categories,
+        )
+
         if not self._is_safe_to_proceed(safety):
-            logger.warning(f"[{self.name}] Safety check failed: {safety.reason}")
+            logger.warning(
+                "planner_v2.safety.blocked",
+                reason=safety.reason,
+                categories=safety.categories,
+            )
             return self._create_result(
                 success=False,
                 data={
@@ -334,7 +377,11 @@ class PlannerAgentV2(BaseAgent):
 
         # STEP 3: Classify Complexity - PLANNER DECIDES
         complexity = self._classify_complexity(requirements)
-        logger.info(f"[{self.name}] Complexity: {complexity}")
+        logger.info(
+            "planner_v2.complexity.classified",
+            complexity=complexity,
+            product_type=requirements.get("product_type"),
+        )
 
         # STEP 4: Create PlanningTask and delegate to ReactPromptAgent
         planning_task = PlanningTask(
@@ -383,7 +430,12 @@ class PlannerAgentV2(BaseAgent):
         requirements = context.requirements or {}
         safety_data = context.metadata.get("safety", {})
 
-        logger.debug(f"[{self.name}] Post-prompt: quality={prompt_plan.quality_score:.2f}")
+        logger.info(
+            "planner_v2.post_prompt.start",
+            quality_score=prompt_plan.quality_score,
+            mode=prompt_plan.mode,
+            prompt_length=len(prompt_plan.prompt),
+        )
 
         # STEP 1: Select Model - PLANNER DECIDES
         model_id, rationale, alternatives = await self._select_model(
@@ -391,10 +443,24 @@ class PlannerAgentV2(BaseAgent):
             requirements=requirements,
         )
 
+        logger.info(
+            "planner_v2.model.selected",
+            model_id=model_id,
+            rationale=rationale[:100] if rationale else None,
+            alternatives_count=len(alternatives),
+        )
+
         # STEP 2: Select Pipeline - PLANNER DECIDES
         pipeline = await self._select_pipeline(
             requirements=requirements,
             prompt=prompt_plan.prompt,
+        )
+
+        logger.info(
+            "planner_v2.pipeline.selected",
+            pipeline_type=pipeline.pipeline_type,
+            stage_1_model=pipeline.stage_1_model,
+            stage_2_model=pipeline.stage_2_model,
         )
 
         # STEP 3: Build AssemblyRequest
@@ -406,6 +472,13 @@ class PlannerAgentV2(BaseAgent):
             model_alternatives=alternatives,
             pipeline=pipeline,
             safety=SafetyClassification.from_dict(safety_data) if safety_data else None,
+        )
+
+        logger.info(
+            "planner_v2.assembly_request.created",
+            model_id=model_id,
+            pipeline_type=pipeline.pipeline_type,
+            prompt_length=len(prompt_plan.prompt),
         )
 
         # Store in context
@@ -432,6 +505,12 @@ class PlannerAgentV2(BaseAgent):
         """
         requirements = context.requirements or {}
         previous_plan = context.metadata.get("prompt_plan", {})
+
+        logger.info(
+            "planner_v2.fix_plan.start",
+            has_feedback=evaluation_feedback is not None,
+            issues_count=len(evaluation_feedback.get("issues", [])) if evaluation_feedback else 0,
+        )
 
         planning_task = PlanningTask(
             job_id=context.job_id,
@@ -596,7 +675,11 @@ class PlannerAgentV2(BaseAgent):
             )
             return model_id, rationale, alternatives
         except Exception as e:
-            logger.warning(f"[{self.name}] Model selection failed, using default: {e}")
+            logger.warning(
+                "planner_v2.model.selection_failed",
+                error=str(e),
+                fallback_model="default-model",
+            )
             return "default-model", "Fallback selection", []
 
     async def _select_pipeline(
@@ -613,7 +696,11 @@ class PlannerAgentV2(BaseAgent):
                 prompt=prompt,
             )
         except Exception as e:
-            logger.warning(f"[{self.name}] Pipeline selection failed, using single: {e}")
+            logger.warning(
+                "planner_v2.pipeline.selection_failed",
+                error=str(e),
+                fallback_pipeline="single",
+            )
             return PipelineConfig(pipeline_type="single")
 
     # =========================================================================

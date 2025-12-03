@@ -9,9 +9,10 @@ Documentation Reference: Section 5.2.4
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
-import logging
 import asyncio
 import yaml
+
+from src.utils.logger import get_logger
 
 from palet8_agents.core.agent import BaseAgent, AgentContext, AgentResult, AgentState
 from palet8_agents.core.config import get_config
@@ -28,7 +29,7 @@ from palet8_agents.models import (
     SafetyResult,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Config file path
 SAFETY_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "safety_config.yaml"
@@ -178,10 +179,18 @@ class SafetyAgent(BaseAgent):
                 with open(self._config_path, "r") as f:
                     return yaml.safe_load(f) or {}
             else:
-                logger.warning(f"Safety config not found: {self._config_path}")
+                logger.warning(
+                    "safety.config.not_found",
+                    config_path=str(self._config_path),
+                )
                 return {}
         except Exception as e:
-            logger.error(f"Failed to load safety config: {e}")
+            logger.error(
+                "safety.config.load_error",
+                config_path=str(self._config_path),
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             return {}
 
     def _build_ip_blocklist(self) -> Set[str]:
@@ -241,6 +250,14 @@ class SafetyAgent(BaseAgent):
         """
         self._start_execution()
 
+        logger.info(
+            "safety.run.start",
+            job_id=context.job_id,
+            has_user_input=user_input is not None,
+            has_requirements=context.requirements is not None,
+            has_plan=context.plan is not None,
+        )
+
         try:
             # Check all available data in context
             if user_input:
@@ -267,7 +284,13 @@ class SafetyAgent(BaseAgent):
             )
 
         except Exception as e:
-            logger.error(f"Safety Agent error: {e}", exc_info=True)
+            logger.error(
+                "safety.run.error",
+                job_id=context.job_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
             return self._create_result(
                 success=False,
                 data=None,
@@ -286,7 +309,10 @@ class SafetyAgent(BaseAgent):
         """
         self._job_flags[job_id] = []
         self._job_scores[job_id] = 1.0  # Start with perfect score
-        logger.info(f"Safety monitoring started for job {job_id}")
+        logger.info(
+            "safety.monitoring.start",
+            job_id=job_id,
+        )
 
     async def on_event(
         self,
@@ -307,6 +333,13 @@ class SafetyAgent(BaseAgent):
         Returns:
             SafetyFlag if issue detected, None otherwise
         """
+        logger.debug(
+            "safety.event.received",
+            event_type=event_type,
+            job_id=job_id,
+            data_length=len(str(data)) if data else 0,
+        )
+
         try:
             # Initialize job tracking if needed
             if job_id not in self._job_flags:
@@ -334,14 +367,34 @@ class SafetyAgent(BaseAgent):
                 self._job_flags[job_id].append(flag)
                 self._update_job_score(job_id, flag)
 
+                logger.warning(
+                    "safety.flag.detected",
+                    job_id=job_id,
+                    category=flag.category.value,
+                    severity=flag.severity.value,
+                    score=flag.score,
+                    source=flag.source,
+                )
+
                 # Check if this triggers a critical block
                 if flag.severity == SafetySeverity.CRITICAL:
-                    logger.warning(f"Critical safety violation in job {job_id}: {flag.description}")
+                    logger.error(
+                        "safety.violation.critical",
+                        job_id=job_id,
+                        category=flag.category.value,
+                        description=flag.description,
+                    )
 
             return flag
 
         except Exception as e:
-            logger.error(f"Safety event processing error: {e}")
+            logger.error(
+                "safety.event.error",
+                job_id=job_id,
+                event_type=event_type,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             return None
 
     async def get_safety_verdict(self, job_id: str) -> SafetyResult:
@@ -374,6 +427,15 @@ class SafetyAgent(BaseAgent):
         if not is_safe:
             user_message = self._generate_user_message(blocked_categories, flags)
             alternatives = self._generate_alternatives(blocked_categories)
+
+        logger.info(
+            "safety.verdict.generated",
+            job_id=job_id,
+            is_safe=is_safe,
+            overall_score=overall_score,
+            flags_count=len(flags),
+            blocked_categories=blocked_categories,
+        )
 
         return SafetyResult(
             job_id=job_id,
@@ -443,7 +505,11 @@ class SafetyAgent(BaseAgent):
                 )
 
         except Exception as e:
-            logger.warning(f"LLM safety check failed: {e}")
+            logger.warning(
+                "safety.llm_check.failed",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
 
         return None
 
@@ -517,6 +583,13 @@ class SafetyAgent(BaseAgent):
                 # IP never blocks per policy, just tags
                 ip_blocks = self.blocking_behavior.get("ip_trademark") == "block"
                 severity = SafetySeverity.HIGH if ip_blocks else SafetySeverity.MEDIUM
+
+                logger.warning(
+                    "safety.ip.detected",
+                    term=blocked_term,
+                    source=source,
+                    action="tag",
+                )
 
                 return SafetyFlag(
                     category=SafetyCategory.IP_TRADEMARK,

@@ -12,8 +12,9 @@ from typing import Any, Dict, List, Optional, Callable, Awaitable
 from uuid import uuid4
 import asyncio
 import base64
-import logging
 import time
+
+from src.utils.logger import get_logger
 
 from palet8_agents.models import (
     AssemblyRequest,
@@ -29,7 +30,7 @@ from palet8_agents.services.image_generation_service import (
     ImageGenerationError,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AssemblyError(Exception):
@@ -120,8 +121,17 @@ class AssemblyService:
         progress = ProgressCallback(callback=progress_callback)
 
         logger.info(
-            f"[AssemblyService] Starting execution job_id={request.job_id}, "
-            f"task_id={task_id}, pipeline={request.pipeline.pipeline_type}"
+            "assembly.execution.start",
+            job_id=request.job_id,
+            task_id=task_id,
+            pipeline_type=request.pipeline.pipeline_type,
+            model_id=request.model_id or request.pipeline.stage_1_model,
+            prompt_length=len(request.prompt),
+            negative_prompt_length=len(request.negative_prompt or ""),
+            num_images=request.parameters.num_images,
+            width=request.parameters.width,
+            height=request.parameters.height,
+            has_reference=request.reference_image_url is not None,
         )
 
         try:
@@ -144,15 +154,30 @@ class AssemblyService:
             await progress.report("complete", 1.0, "Generation complete")
 
             logger.info(
-                f"[AssemblyService] Execution complete job_id={request.job_id}, "
-                f"task_id={task_id}, duration_ms={result.duration_ms}, "
-                f"images={len(result.images)}"
+                "assembly.execution.complete",
+                job_id=request.job_id,
+                task_id=task_id,
+                duration_ms=result.duration_ms,
+                actual_cost=result.actual_cost,
+                images_count=len(result.images),
+                pipeline_type=result.pipeline_type,
+                model_used=result.model_used,
             )
 
             return result
 
         except ImageGenerationError as e:
-            logger.error(f"[AssemblyService] Generation error: {e}")
+            duration_ms = int((time.time() - start_time) * 1000)
+            logger.error(
+                "assembly.execution.error",
+                job_id=request.job_id,
+                task_id=task_id,
+                error=str(e),
+                error_code="GENERATION_ERROR",
+                duration_ms=duration_ms,
+                stage_failed="generation",
+                partial_cost=0.0,
+            )
             await progress.report("error", 0.0, str(e))
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
@@ -164,7 +189,15 @@ class AssemblyService:
                 duration_ms=int((time.time() - start_time) * 1000),
             )
         except asyncio.TimeoutError:
-            logger.error(f"[AssemblyService] Execution timeout")
+            duration_ms = int((time.time() - start_time) * 1000)
+            logger.error(
+                "assembly.execution.timeout",
+                job_id=request.job_id,
+                task_id=task_id,
+                timeout_seconds=self._timeout,
+                duration_ms=duration_ms,
+                stage_at_timeout="generation",
+            )
             await progress.report("error", 0.0, "Generation timed out")
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
@@ -176,7 +209,16 @@ class AssemblyService:
                 duration_ms=int((time.time() - start_time) * 1000),
             )
         except Exception as e:
-            logger.error(f"[AssemblyService] Unexpected error: {e}", exc_info=True)
+            duration_ms = int((time.time() - start_time) * 1000)
+            logger.error(
+                "assembly.execution.unexpected_error",
+                job_id=request.job_id,
+                task_id=task_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                duration_ms=duration_ms,
+                exc_info=True,
+            )
             await progress.report("error", 0.0, str(e))
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
@@ -216,9 +258,31 @@ class AssemblyService:
             metadata={"job_id": request.job_id, "task_id": task_id},
         )
 
+        # Log request details
+        logger.info(
+            "assembly.single.generation.sending",
+            model=gen_request.model,
+            prompt=gen_request.prompt[:200] if gen_request.prompt else None,
+            negative_prompt=gen_request.negative_prompt[:100] if gen_request.negative_prompt else None,
+            width=gen_request.width,
+            height=gen_request.height,
+            num_images=gen_request.num_images,
+            steps=gen_request.steps,
+            guidance_scale=gen_request.guidance_scale,
+            seed=gen_request.seed,
+        )
+
         # Execute generation
         await progress.report("generation_progress", 0.4, "Waiting for provider")
         gen_result = await image_service.generate_images(gen_request)
+
+        logger.info(
+            "assembly.single.generation.received",
+            images_count=len(gen_result.images),
+            cost_usd=gen_result.cost_usd,
+            provider=gen_result.provider,
+            model_used=gen_result.model_used,
+        )
 
         await progress.report("generation_progress", 0.8, "Processing results")
 
@@ -276,6 +340,18 @@ class AssemblyService:
             metadata={"job_id": request.job_id, "task_id": task_id, "stage": 1},
         )
 
+        # Log stage 1 request
+        logger.info(
+            "assembly.dual.stage1.sending",
+            model=pipeline.stage_1_model,
+            purpose=pipeline.stage_1_purpose,
+            prompt=stage1_request.prompt[:200] if stage1_request.prompt else None,
+            negative_prompt=stage1_request.negative_prompt[:100] if stage1_request.negative_prompt else None,
+            width=stage1_request.width,
+            height=stage1_request.height,
+            steps=stage1_request.steps,
+        )
+
         await progress.report("generation_progress", 0.2, "Generating initial image")
         stage1_result = await image_service.generate_images(stage1_request)
 
@@ -289,6 +365,15 @@ class AssemblyService:
             "cost": stage1_result.cost_usd,
             "image_url": stage1_image.url,
         }
+
+        logger.info(
+            "assembly.dual.stage1.complete",
+            model=stage1_result.model_used,
+            cost_usd=stage1_result.cost_usd,
+            provider=stage1_result.provider,
+            has_image=len(stage1_result.images) > 0,
+            image_url=stage1_image.url[:100] if stage1_image.url else None,
+        )
 
         await progress.report("generation_progress", 0.5, f"Stage 2: {pipeline.stage_2_purpose}")
 
@@ -306,8 +391,27 @@ class AssemblyService:
             metadata={"job_id": request.job_id, "task_id": task_id, "stage": 2},
         )
 
+        # Log stage 2 request
+        logger.info(
+            "assembly.dual.stage2.sending",
+            model=pipeline.stage_2_model,
+            purpose=pipeline.stage_2_purpose,
+            prompt=stage2_request.prompt[:200] if stage2_request.prompt else None,
+            input_image_url=stage1_image.url[:100] if stage1_image.url else None,
+            width=stage2_request.width,
+            height=stage2_request.height,
+        )
+
         await progress.report("generation_progress", 0.7, "Refining image")
         stage2_result = await image_service.generate_images(stage2_request)
+
+        logger.info(
+            "assembly.dual.stage2.complete",
+            model=stage2_result.model_used,
+            cost_usd=stage2_result.cost_usd,
+            provider=stage2_result.provider,
+            images_count=len(stage2_result.images),
+        )
 
         stage2_data = {
             "model": stage2_result.model_used,

@@ -29,8 +29,9 @@ Documentation Reference: Section 5.2.3
 """
 
 from typing import Any, Dict, List, Optional
-import logging
 import json
+
+from src.utils.logger import get_logger
 
 from palet8_agents.core.agent import BaseAgent, AgentContext, AgentResult
 from palet8_agents.core.config import get_config
@@ -55,7 +56,7 @@ from palet8_agents.models import (
 from palet8_agents.services.prompt_evaluation_service import PromptEvaluationService
 from palet8_agents.services.result_evaluation_service import ResultEvaluationService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # =============================================================================

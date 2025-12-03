@@ -29,9 +29,10 @@ Documentation Reference: Section 5.2.2
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
-import logging
 import asyncio
 import re
+
+from src.utils.logger import get_logger, set_correlation_context
 
 from palet8_agents.core.agent import BaseAgent, AgentContext, AgentResult
 from palet8_agents.core.config import get_config
@@ -68,7 +69,7 @@ from palet8_agents.services.model_selection_service import ModelSelectionService
 from palet8_agents.services.prompt_evaluation_service import PromptEvaluationService
 from palet8_agents.services.safety_classification_service import SafetyClassificationService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # =============================================================================
@@ -393,6 +394,19 @@ class PlannerAgent(BaseAgent):
         """
         self._start_execution()
 
+        # Set correlation context for all downstream logs
+        set_correlation_context(
+            job_id=context.job_id,
+            user_id=context.user_id,
+        )
+
+        logger.info(
+            "planner.run.start",
+            phase=phase,
+            has_feedback=evaluation_feedback is not None,
+            requirements_count=len(context.requirements or {}),
+        )
+
         try:
             requirements = context.requirements or {}
 
@@ -422,8 +436,15 @@ class PlannerAgent(BaseAgent):
         # =====================================================================
         completeness = await self._evaluate_context_completeness(requirements)
 
+        logger.info(
+            "planner.context.evaluated",
+            score=completeness.score,
+            is_sufficient=completeness.is_sufficient,
+            missing_count=len(completeness.missing_fields),
+            missing_fields=completeness.missing_fields[:5],
+        )
+
         if not completeness.is_sufficient:
-            logger.info(f"Context incomplete (score={completeness.score:.2f}), requesting clarification")
             return self._create_result(
                 success=True,
                 data={
@@ -440,8 +461,20 @@ class PlannerAgent(BaseAgent):
         # =====================================================================
         safety = await self._classify_safety(requirements)
 
+        logger.info(
+            "planner.safety.classified",
+            is_safe=safety.is_safe,
+            risk_level=safety.risk_level,
+            requires_review=safety.requires_review,
+            categories=safety.categories,
+        )
+
         if not safety.is_safe:
-            logger.warning(f"Safety check failed: {safety.reason}")
+            logger.warning(
+                "planner.safety.blocked",
+                reason=safety.reason,
+                categories=safety.categories,
+            )
             return self._create_result(
                 success=False,
                 data={
@@ -456,7 +489,12 @@ class PlannerAgent(BaseAgent):
         # STEP 3: Decide Prompt MODE
         # =====================================================================
         mode = await self._decide_mode(requirements)
-        logger.info(f"Selected prompt mode: {mode.value}")
+        logger.info(
+            "planner.mode.selected",
+            mode=mode.value,
+            product_type=requirements.get("product_type"),
+            print_method=requirements.get("print_method"),
+        )
 
         # =====================================================================
         # STEP 4: Get Planning Context from Template Service
@@ -481,6 +519,14 @@ class PlannerAgent(BaseAgent):
             model_info_task,
         )
 
+        logger.info(
+            "planner.rag.complete",
+            art_refs_count=len(rag_context.art_references or []),
+            prompts_count=len(rag_context.similar_prompts or []),
+            web_search_used=getattr(rag_context, 'metadata', {}).get('web_search_used', False) if hasattr(rag_context, 'metadata') and rag_context.metadata else False,
+            available_models_count=len(model_info_context.get("available_models", [])),
+        )
+
         # =====================================================================
         # STEP 6: Select Dimensions
         # =====================================================================
@@ -489,6 +535,13 @@ class PlannerAgent(BaseAgent):
             requirements=requirements,
             planning_context=planning_context,
             rag_context=rag_context,
+        )
+
+        logger.info(
+            "planner.dimensions.selected",
+            subject=getattr(dimensions, 'subject', None),
+            aesthetic=getattr(dimensions, 'aesthetic', None),
+            mode=mode.value,
         )
 
         # =====================================================================
@@ -503,6 +556,13 @@ class PlannerAgent(BaseAgent):
             product=product,
         )
 
+        logger.info(
+            "planner.prompt.composed",
+            prompt_length=len(composed.positive_prompt),
+            negative_prompt_length=len(composed.negative_prompt or ""),
+            mode=mode.value,
+        )
+
         # =====================================================================
         # STEP 8: Evaluate Prompt Quality
         # =====================================================================
@@ -514,6 +574,13 @@ class PlannerAgent(BaseAgent):
             requirements=requirements,
         )
 
+        logger.info(
+            "planner.prompt.quality.evaluated",
+            score=getattr(quality_score, 'score', None) or getattr(quality_score, 'overall_score', None),
+            revision_count=revision_count,
+            is_acceptable=getattr(quality_score, 'is_acceptable', True),
+        )
+
         if revision_count > 0:
             prompt = quality_score.revised_prompt if hasattr(quality_score, 'revised_prompt') else prompt
 
@@ -523,6 +590,14 @@ class PlannerAgent(BaseAgent):
         pipeline_config = await self._decide_pipeline(
             requirements=requirements,
             mode=mode,
+        )
+
+        logger.info(
+            "planner.pipeline.decided",
+            pipeline_type=pipeline_config.pipeline_type,
+            pipeline_name=getattr(pipeline_config, 'pipeline_name', None),
+            stage_1_model=pipeline_config.stage_1_model,
+            stage_2_model=pipeline_config.stage_2_model,
         )
 
         # =====================================================================
@@ -544,6 +619,14 @@ class PlannerAgent(BaseAgent):
             # Update pipeline config with selected model
             pipeline_config.stage_1_model = model_id
 
+        logger.info(
+            "planner.model.selected",
+            model_id=model_id,
+            rationale=model_rationale[:100] if model_rationale else None,
+            alternatives_count=len(model_alternatives),
+            alternatives=model_alternatives[:3],
+        )
+
         # =====================================================================
         # STEP 11: Build AssemblyRequest
         # =====================================================================
@@ -562,6 +645,15 @@ class PlannerAgent(BaseAgent):
             safety=safety,
             rag_context=rag_context,
             requirements=requirements,
+            revision_count=revision_count,
+        )
+
+        logger.info(
+            "planner.assembly_request.created",
+            estimated_cost=getattr(assembly_request, 'estimated_cost', None),
+            prompt_quality_score=getattr(assembly_request, 'prompt_quality_score', None),
+            model_id=model_id,
+            pipeline_type=pipeline_config.pipeline_type,
             revision_count=revision_count,
         )
 
@@ -592,8 +684,19 @@ class PlannerAgent(BaseAgent):
         current_plan = context.plan or {}
         revision_count = current_plan.get("revision_count", 0) + 1
 
+        logger.info(
+            "planner.fix_plan.start",
+            iteration=revision_count,
+            issues_count=len(feedback.issues) if hasattr(feedback, 'issues') else 0,
+            issues=feedback.issues[:3] if hasattr(feedback, 'issues') else [],
+        )
+
         if revision_count > self.max_fix_iterations:
-            logger.warning(f"Max fix iterations ({self.max_fix_iterations}) reached")
+            logger.warning(
+                "planner.fix_plan.max_retries",
+                iteration=revision_count,
+                max_allowed=self.max_fix_iterations,
+            )
             return self._create_result(
                 success=False,
                 data={
@@ -604,8 +707,6 @@ class PlannerAgent(BaseAgent):
                 error="Maximum revision attempts exceeded",
                 error_code="MAX_RETRIES_EXCEEDED",
             )
-
-        logger.info(f"Fix plan iteration {revision_count}, issues: {feedback.issues}")
 
         # Apply retry suggestions to requirements
         revised_requirements = await self._apply_feedback_to_requirements(

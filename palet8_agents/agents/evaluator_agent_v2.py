@@ -17,7 +17,8 @@ Documentation Reference: Section 5.2.3
 
 from typing import Any, Dict, List, Optional
 from pathlib import Path
-import logging
+
+from src.utils.logger import get_logger
 
 from palet8_agents.core.agent import BaseAgent, AgentContext, AgentResult
 from palet8_agents.core.config import get_config
@@ -32,7 +33,7 @@ from palet8_agents.models import (
     EvaluationFeedback,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _load_system_prompt() -> str:
@@ -124,8 +125,13 @@ class EvaluatorAgentV2(BaseAgent):
         """
         self._start_execution()
 
+        logger.info(
+            "evaluator_v2.run.start",
+            phase=phase,
+            has_image_data=image_data is not None,
+        )
+
         try:
-            logger.info(f"[{self.name}] Starting phase={phase}, job_id={context.job_id}")
 
             if phase == "create_plan":
                 return await self._handle_create_plan(context)
@@ -140,7 +146,13 @@ class EvaluatorAgentV2(BaseAgent):
                 )
 
         except Exception as e:
-            logger.error(f"[{self.name}] Error: {e}", exc_info=True)
+            logger.error(
+                "evaluator_v2.run.error",
+                phase=phase,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
             return self._create_result(
                 success=False,
                 data=None,
@@ -173,7 +185,12 @@ class EvaluatorAgentV2(BaseAgent):
         print_method = requirements.get("print_method")
         dimensions = assembly_request.get("dimensions") or plan_data.get("dimensions", {})
 
-        logger.debug(f"[{self.name}] Evaluating prompt quality, mode={mode}")
+        logger.info(
+            "evaluator_v2.prompt_eval.start",
+            mode=mode,
+            prompt_length=len(prompt),
+            product_type=product_type,
+        )
 
         # ACT: Use prompt_quality tool to assess
         quality_result = await self.call_tool(
@@ -188,7 +205,10 @@ class EvaluatorAgentV2(BaseAgent):
         )
 
         if not quality_result.success:
-            logger.warning(f"[{self.name}] Prompt quality tool failed: {quality_result.error}")
+            logger.warning(
+                "evaluator_v2.tool.prompt_quality_failed",
+                error=quality_result.error,
+            )
             # Fallback: assume pass but log warning
             prompt_quality = PromptQualityResult(
                 overall=0.7,
@@ -243,9 +263,20 @@ class EvaluatorAgentV2(BaseAgent):
     ) -> AgentResult:
         """DECIDE: Determine next action based on prompt quality."""
 
+        logger.info(
+            "evaluator_v2.prompt_eval.scored",
+            overall=quality.overall,
+            decision=quality.decision,
+            threshold=quality.threshold,
+            failed_dimensions=quality.failed_dimensions,
+        )
+
         if quality.decision == "POLICY_FAIL":
             # Hard block
-            logger.warning(f"[{self.name}] Policy violation detected")
+            logger.error(
+                "evaluator_v2.prompt_eval.policy_fail",
+                failed_dimensions=quality.failed_dimensions,
+            )
             return self._create_result(
                 success=False,
                 data={
@@ -260,7 +291,11 @@ class EvaluatorAgentV2(BaseAgent):
 
         if quality.decision == "FIX_REQUIRED":
             # Prompt needs improvement - return to Planner
-            logger.info(f"[{self.name}] Fix required: {quality.failed_dimensions}")
+            logger.warning(
+                "evaluator_v2.prompt_eval.fix_required",
+                failed_dimensions=quality.failed_dimensions,
+                feedback_count=len(quality.feedback),
+            )
 
             # Build feedback for planner
             feedback = EvaluationFeedback(
@@ -283,7 +318,10 @@ class EvaluatorAgentV2(BaseAgent):
             )
 
         # PASS - proceed to generation
-        logger.info(f"[{self.name}] Prompt quality passed: {quality.overall:.2f}")
+        logger.info(
+            "evaluator_v2.prompt_eval.passed",
+            overall_score=quality.overall,
+        )
         return self._create_result(
             success=True,
             data={
@@ -334,7 +372,11 @@ class EvaluatorAgentV2(BaseAgent):
                 mode=mode,
             )
 
-        logger.debug(f"[{self.name}] Evaluating result quality")
+        logger.info(
+            "evaluator_v2.result_eval.start",
+            mode=plan.mode,
+            has_plan=plan_data is not None,
+        )
 
         # ACT: Use image_evaluation tool
         eval_result = await self.call_tool(
@@ -345,7 +387,10 @@ class EvaluatorAgentV2(BaseAgent):
         )
 
         if not eval_result.success:
-            logger.warning(f"[{self.name}] Image evaluation tool failed: {eval_result.error}")
+            logger.warning(
+                "evaluator_v2.tool.image_evaluation_failed",
+                error=eval_result.error,
+            )
             # Fallback: approve with warning
             result_quality = ResultQualityResult(
                 overall=0.7,
@@ -378,9 +423,20 @@ class EvaluatorAgentV2(BaseAgent):
     ) -> AgentResult:
         """DECIDE: Determine next action based on result quality."""
 
+        logger.info(
+            "evaluator_v2.result_eval.scored",
+            overall=quality.overall,
+            decision=quality.decision,
+            threshold=quality.threshold,
+            failed_dimensions=quality.failed_dimensions,
+        )
+
         if quality.decision == "POLICY_FAIL":
             # Hard block
-            logger.warning(f"[{self.name}] Policy violation in result")
+            logger.error(
+                "evaluator_v2.result_eval.policy_fail",
+                failed_dimensions=quality.failed_dimensions,
+            )
             return self._create_result(
                 success=False,
                 data={
@@ -393,7 +449,13 @@ class EvaluatorAgentV2(BaseAgent):
             )
 
         if quality.decision == "REJECT":
-            logger.info(f"[{self.name}] Result rejected: {quality.failed_dimensions}")
+            logger.warning(
+                "evaluator_v2.result_eval.rejected",
+                overall=quality.overall,
+                failed_dimensions=quality.failed_dimensions,
+                feedback_count=len(quality.feedback),
+                should_retry=should_retry,
+            )
 
             # Build feedback for planner
             feedback = EvaluationFeedback(
@@ -419,7 +481,11 @@ class EvaluatorAgentV2(BaseAgent):
             )
 
         # APPROVE - return to user
-        logger.info(f"[{self.name}] Result approved: {quality.overall:.2f}")
+        logger.info(
+            "evaluator_v2.result_eval.approved",
+            overall=quality.overall,
+            threshold=quality.threshold,
+        )
         return self._create_result(
             success=True,
             data={
