@@ -137,6 +137,14 @@ class AssemblyService:
         try:
             # Report start
             await progress.report("generation_start", 0.0, "Starting image generation")
+            logger.info(
+                "assembly.progress",
+                job_id=request.job_id,
+                task_id=task_id,
+                stage="generation_start",
+                progress_pct=0,
+                message="Starting image generation",
+            )
 
             # Determine pipeline type and execute
             pipeline = request.pipeline
@@ -152,6 +160,14 @@ class AssemblyService:
 
             # Report completion
             await progress.report("complete", 1.0, "Generation complete")
+            logger.info(
+                "assembly.progress",
+                job_id=request.job_id,
+                task_id=task_id,
+                stage="complete",
+                progress_pct=100,
+                message="Generation complete",
+            )
 
             logger.info(
                 "assembly.execution.complete",
@@ -238,6 +254,14 @@ class AssemblyService:
     ) -> ExecutionResult:
         """Execute single model pipeline."""
         await progress.report("generation_progress", 0.2, "Generating with single model")
+        logger.info(
+            "assembly.progress",
+            job_id=request.job_id,
+            task_id=task_id,
+            stage="single_pipeline_start",
+            progress_pct=20,
+            message="Generating with single model",
+        )
 
         image_service = await self._get_image_service()
 
@@ -274,6 +298,14 @@ class AssemblyService:
 
         # Execute generation
         await progress.report("generation_progress", 0.4, "Waiting for provider")
+        logger.info(
+            "assembly.progress",
+            job_id=request.job_id,
+            task_id=task_id,
+            stage="waiting_for_provider",
+            progress_pct=40,
+            message="Waiting for provider",
+        )
         gen_result = await image_service.generate_images(gen_request)
 
         logger.info(
@@ -285,6 +317,14 @@ class AssemblyService:
         )
 
         await progress.report("generation_progress", 0.8, "Processing results")
+        logger.info(
+            "assembly.progress",
+            job_id=request.job_id,
+            task_id=task_id,
+            stage="processing_results",
+            progress_pct=80,
+            message="Processing results",
+        )
 
         # Convert to ExecutionResult
         images = []
@@ -320,6 +360,14 @@ class AssemblyService:
         pipeline = request.pipeline
 
         await progress.report("generation_progress", 0.1, f"Stage 1: {pipeline.stage_1_purpose}")
+        logger.info(
+            "assembly.progress",
+            job_id=request.job_id,
+            task_id=task_id,
+            stage="dual_stage1_start",
+            progress_pct=10,
+            message=f"Stage 1: {pipeline.stage_1_purpose}",
+        )
 
         image_service = await self._get_image_service()
 
@@ -353,6 +401,14 @@ class AssemblyService:
         )
 
         await progress.report("generation_progress", 0.2, "Generating initial image")
+        logger.info(
+            "assembly.progress",
+            job_id=request.job_id,
+            task_id=task_id,
+            stage="dual_generating_initial",
+            progress_pct=20,
+            message="Generating initial image",
+        )
         stage1_result = await image_service.generate_images(stage1_request)
 
         if not stage1_result.images:
@@ -376,6 +432,14 @@ class AssemblyService:
         )
 
         await progress.report("generation_progress", 0.5, f"Stage 2: {pipeline.stage_2_purpose}")
+        logger.info(
+            "assembly.progress",
+            job_id=request.job_id,
+            task_id=task_id,
+            stage="dual_stage2_start",
+            progress_pct=50,
+            message=f"Stage 2: {pipeline.stage_2_purpose}",
+        )
 
         # Stage 2: Refinement
         stage2_request = ImageGenerationRequest(
@@ -403,6 +467,14 @@ class AssemblyService:
         )
 
         await progress.report("generation_progress", 0.7, "Refining image")
+        logger.info(
+            "assembly.progress",
+            job_id=request.job_id,
+            task_id=task_id,
+            stage="dual_refining_image",
+            progress_pct=70,
+            message="Refining image",
+        )
         stage2_result = await image_service.generate_images(stage2_request)
 
         logger.info(
@@ -420,6 +492,14 @@ class AssemblyService:
         }
 
         await progress.report("generation_progress", 0.9, "Finalizing results")
+        logger.info(
+            "assembly.progress",
+            job_id=request.job_id,
+            task_id=task_id,
+            stage="finalizing_results",
+            progress_pct=90,
+            message="Finalizing results",
+        )
 
         # Convert final images
         images = []

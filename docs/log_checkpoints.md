@@ -150,15 +150,41 @@ All logs automatically include correlation IDs when set:
 | Event | Level | Fields | Description |
 |-------|-------|--------|-------------|
 | `assembly.execution.start` | INFO | `job_id`, `task_id`, `pipeline_type`, `model_id`, `prompt_length`, `negative_prompt_length`, `num_images`, `width`, `height`, `has_reference` | Generation started |
+| `assembly.progress` | INFO | `job_id`, `task_id`, `stage`, `progress_pct`, `message` | Progress update (0-100%) |
 | `assembly.execution.complete` | INFO | `job_id`, `task_id`, `duration_ms`, `actual_cost`, `images_count`, `pipeline_type`, `model_used` | Generation completed |
 | `assembly.execution.error` | ERROR | `job_id`, `task_id`, `error`, `error_code`, `duration_ms`, `stage_failed`, `partial_cost` | Generation failed |
 | `assembly.execution.timeout` | ERROR | `job_id`, `task_id`, `timeout_seconds`, `duration_ms`, `stage_at_timeout` | Generation timed out |
+| `assembly.execution.unexpected_error` | ERROR | `job_id`, `task_id`, `error`, `error_type`, `duration_ms` | Unexpected error |
 | `assembly.single.generation.sending` | INFO | `model`, `prompt`, `negative_prompt`, `width`, `height`, `num_images`, `steps`, `guidance_scale`, `seed` | Single pipeline request sent |
 | `assembly.single.generation.received` | INFO | `images_count`, `cost_usd`, `provider`, `model_used` | Single pipeline response received |
 | `assembly.dual.stage1.sending` | INFO | `model`, `purpose`, `prompt`, `negative_prompt`, `width`, `height`, `steps` | Dual pipeline stage 1 sent |
 | `assembly.dual.stage1.complete` | INFO | `model`, `cost_usd`, `provider`, `has_image`, `image_url` | Dual pipeline stage 1 done |
 | `assembly.dual.stage2.sending` | INFO | `model`, `purpose`, `prompt`, `input_image_url`, `width`, `height` | Dual pipeline stage 2 sent |
 | `assembly.dual.stage2.complete` | INFO | `model`, `cost_usd`, `provider`, `images_count` | Dual pipeline stage 2 done |
+
+### Progress Stages
+
+The `assembly.progress` event tracks pipeline execution with `progress_pct` values:
+
+**Single Pipeline:**
+| Stage | Progress % | Description |
+|-------|------------|-------------|
+| `generation_start` | 0% | Starting image generation |
+| `single_pipeline_start` | 20% | Generating with single model |
+| `waiting_for_provider` | 40% | Waiting for provider response |
+| `processing_results` | 80% | Processing results |
+| `complete` | 100% | Generation complete |
+
+**Dual Pipeline:**
+| Stage | Progress % | Description |
+|-------|------------|-------------|
+| `generation_start` | 0% | Starting image generation |
+| `dual_stage1_start` | 10% | Stage 1 started (initial generation) |
+| `dual_generating_initial` | 20% | Generating initial image |
+| `dual_stage2_start` | 50% | Stage 2 started (refinement) |
+| `dual_refining_image` | 70% | Refining image |
+| `finalizing_results` | 90% | Finalizing results |
+| `complete` | 100% | Generation complete |
 
 ---
 
@@ -274,6 +300,14 @@ jsonPayload.event="api.request.complete"
 jsonPayload.duration_ms>1000
 ```
 
+**Generation progress:**
+```
+resource.type="cloud_run_revision"
+resource.labels.service_name="palet8-agents"
+jsonPayload.event="assembly.progress"
+jsonPayload.job_id="YOUR_JOB_ID"
+```
+
 ---
 
 ## Field Reference
@@ -286,6 +320,7 @@ jsonPayload.duration_ms>1000
 | `conversation_id` | string | Chat conversation ID |
 | `request_id` | string | HTTP request ID |
 | `duration_ms` | int | Operation duration in milliseconds |
+| `progress_pct` | int | Progress percentage (0-100) |
 | `score` / `overall` | float | Quality/safety score (0.0-1.0) |
 | `decision` | string | Outcome (PASS, APPROVE, REJECT, FIX_REQUIRED) |
 | `phase` | string | Execution phase (initial, post_prompt, fix_plan, edit) |
