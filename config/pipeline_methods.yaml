@@ -1,0 +1,276 @@
+# =============================================================================
+# Pipeline Methods Configuration
+# =============================================================================
+# Defines orchestration checkpoints that Planner executes in order.
+# Each checkpoint specifies which agent/service handles it and failure handling.
+# =============================================================================
+
+version: "1.0"
+
+# =============================================================================
+# Standard Generation Pipeline Method
+# =============================================================================
+# Primary pipeline for image generation requests
+# =============================================================================
+pipeline_methods:
+  standard_generation:
+    description: "Standard image generation flow with all quality gates"
+    checkpoints:
+      # Step 1: Quick context check (internal)
+      - id: "context_check"
+        name: "Context Completeness Check"
+        handler: "internal"
+        action: "evaluate_context"
+        description: "Quick check if minimum context is available"
+        on_fail: "request_clarification"
+        outputs:
+          - context_score
+          - missing_fields
+
+      # Step 2: Safety classification (internal)
+      - id: "safety_check"
+        name: "Safety Classification"
+        handler: "internal"
+        action: "classify_safety"
+        description: "Classify request for safety compliance"
+        on_fail: "block"
+        outputs:
+          - safety_result
+          - safety_blocked
+
+      # Step 3: Generation planning (GenPlan agent)
+      - id: "generation_plan"
+        name: "Generation Planning"
+        handler: "agent"
+        agent: "genplan"
+        description: "Determine complexity, genflow, model, and parameters"
+        on_fail: "request_clarification"
+        outputs:
+          - complexity
+          - complexity_rationale
+          - user_info
+          - genflow
+          - model_id
+          - model_rationale
+          - model_alternatives
+          - model_input_params
+          - provider_params
+          - pipeline_config
+
+      # Step 4: Prompt building (ReactPrompt agent)
+      - id: "prompt_build"
+        name: "Prompt Composition"
+        handler: "agent"
+        agent: "react_prompt"
+        description: "Build context, select dimensions, compose prompt"
+        on_fail: "retry"
+        max_retries: 3
+        outputs:
+          - prompt
+          - negative_prompt
+          - dimensions
+          - context_summary
+          - quality_score
+
+      # Step 5: Pre-generation evaluation (Evaluator agent)
+      - id: "pre_evaluation"
+        name: "Pre-Generation Quality Check"
+        handler: "agent"
+        agent: "evaluator"
+        action: "pre_evaluation"
+        description: "Evaluate prompt quality before generation"
+        on_fail: "retry_prompt_build"
+        max_retries: 3
+        outputs:
+          - evaluation_decision
+          - evaluation_feedback
+          - retry_suggestions
+
+      # Step 6: Execute generation (Assembly service)
+      - id: "execute_generation"
+        name: "Image Generation"
+        handler: "service"
+        service: "assembly"
+        description: "Execute image generation via AssemblyService"
+        on_fail: "retry"
+        max_retries: 2
+        outputs:
+          - generated_images
+          - execution_status
+          - execution_metadata
+
+      # Step 7: Post-generation evaluation (Evaluator agent)
+      - id: "post_evaluation"
+        name: "Post-Generation Quality Check"
+        handler: "agent"
+        agent: "evaluator"
+        action: "post_evaluation"
+        description: "Evaluate generated image quality"
+        on_fail: "retry_generation"
+        max_retries: 3
+        outputs:
+          - evaluation_decision
+          - evaluation_feedback
+          - final_result
+
+# =============================================================================
+# Quick Generation Pipeline (Simplified)
+# =============================================================================
+# Faster pipeline for simple/RELAX mode requests
+# =============================================================================
+  quick_generation:
+    description: "Simplified flow for quick iterations (RELAX mode)"
+    checkpoints:
+      - id: "context_check"
+        name: "Quick Context Check"
+        handler: "internal"
+        action: "evaluate_context"
+        on_fail: "request_clarification"
+
+      - id: "safety_check"
+        name: "Safety Classification"
+        handler: "internal"
+        action: "classify_safety"
+        on_fail: "block"
+
+      - id: "generation_plan"
+        name: "Quick Generation Planning"
+        handler: "agent"
+        agent: "genplan"
+        on_fail: "use_defaults"
+
+      - id: "prompt_build"
+        name: "Quick Prompt Build"
+        handler: "agent"
+        agent: "react_prompt"
+        on_fail: "use_simple_prompt"
+
+      # Skip pre-evaluation for quick mode
+      - id: "execute_generation"
+        name: "Image Generation"
+        handler: "service"
+        service: "assembly"
+        on_fail: "retry"
+        max_retries: 1
+
+      # Simplified post-evaluation
+      - id: "post_evaluation"
+        name: "Quick Quality Check"
+        handler: "agent"
+        agent: "evaluator"
+        action: "quick_evaluation"
+        on_fail: "accept_with_warning"
+
+# =============================================================================
+# Failure Handling Actions
+# =============================================================================
+# Defines what happens when a checkpoint fails
+# =============================================================================
+failure_actions:
+  request_clarification:
+    description: "Route clarification questions through Pali to user"
+    route_to: "pali"
+    message_type: "clarification_request"
+    resume_at: "failed_checkpoint"  # Resume at the checkpoint that failed
+
+  block:
+    description: "Block request due to safety concerns"
+    route_to: "pali"
+    message_type: "blocked_response"
+    terminate: true
+
+  retry:
+    description: "Retry the failed checkpoint"
+    max_retries: 3
+    backoff_ms: 1000
+
+  retry_prompt_build:
+    description: "Re-run prompt building with evaluator feedback"
+    jump_to: "prompt_build"
+    pass_feedback: true
+    max_retries: 3
+
+  retry_generation:
+    description: "Re-run generation with adjusted parameters"
+    jump_to: "execute_generation"
+    adjust_params: true
+    max_retries: 3
+
+  use_defaults:
+    description: "Use default values when GenPlan fails"
+    defaults:
+      complexity: "simple"
+      genflow: "single_standard"
+      model_id: "flux-schnell"
+
+  use_simple_prompt:
+    description: "Use simplified prompt when ReactPrompt fails"
+    use_subject_only: true
+
+  accept_with_warning:
+    description: "Accept result with quality warning"
+    add_warning: true
+    warning_type: "quality_unchecked"
+
+# =============================================================================
+# Checkpoint Dependencies
+# =============================================================================
+# Explicit dependencies between checkpoints (for parallel execution potential)
+# =============================================================================
+checkpoint_dependencies:
+  context_check: []
+  safety_check: []
+  generation_plan:
+    - context_check
+    - safety_check
+  prompt_build:
+    - generation_plan
+  pre_evaluation:
+    - prompt_build
+  execute_generation:
+    - pre_evaluation
+  post_evaluation:
+    - execute_generation
+
+# =============================================================================
+# Agent Configuration
+# =============================================================================
+# Settings for each agent used in the pipeline
+# =============================================================================
+agent_config:
+  genplan:
+    max_steps: 10
+    timeout_ms: 30000
+    uses_services:
+      - context_analysis_service   # For complexity questioning
+      - genflow_service            # For single/dual pipeline decision
+      - model_selection_service    # For model selection
+      - model_info_service         # For model specs and parameters
+
+  react_prompt:
+    max_steps: 15
+    timeout_ms: 45000
+    uses_services:
+      - memory_service             # For user history
+      - rag_service                # For art references
+      - web_search_service         # For style references
+      - prompt_composer_service    # For prompt composition
+      - prompt_evaluation_service  # For quality evaluation
+
+  evaluator:
+    max_steps: 5
+    timeout_ms: 20000
+    uses_services:
+      - result_evaluation_service
+      - prompt_evaluation_service
+
+# =============================================================================
+# Pipeline Selection Rules
+# =============================================================================
+# Rules for selecting which pipeline method to use
+# =============================================================================
+pipeline_selection_rules:
+  - condition: "complexity == 'simple' or mode == 'RELAX'"
+    pipeline: "quick_generation"
+  - condition: "default"
+    pipeline: "standard_generation"

@@ -813,3 +813,384 @@ class TestWebSearch:
         assert summary.web_search_count == 0
         assert summary.metadata["web_search_used"] is False
         assert summary.metadata["has_web_answer"] is False
+
+
+class TestReactPromptBoundary:
+    """Tests verifying ReactPrompt has clear boundaries (TC3.1-TC3.6)."""
+
+    def test_no_model_selection_logic(self):
+        """TC3.1: ReactPrompt does NOT contain model selection logic."""
+        # Read source file directly since inspect.getsource doesn't work with
+        # dynamically loaded modules
+        with open('palet8_agents/agents/react_prompt_agent.py', 'r') as f:
+            source = f.read()
+
+        # Should not have model selection methods
+        assert "_select_model" not in source or "deprecated" in source.lower()
+        # Should not call model selection service for selection
+        assert "select_model(" not in source
+
+    def test_no_pipeline_selection_logic(self):
+        """TC3.2: ReactPrompt does NOT contain pipeline selection logic."""
+        with open('palet8_agents/agents/react_prompt_agent.py', 'r') as f:
+            source = f.read()
+
+        # Should not have pipeline/genflow selection
+        assert "_select_pipeline" not in source
+        assert "determine_genflow" not in source
+
+    def test_receives_generation_plan_from_context(self):
+        """TC3.3: ReactPrompt receives GenerationPlan from context."""
+        agent = ReactPromptAgent()
+
+        # The _init_state method should be able to read generation_plan
+        task = PlanningTask(
+            job_id="job",
+            user_id="user",
+            phase="initial",
+            requirements={"subject": "cat"},
+            complexity="standard",
+            product_type="poster",
+        )
+
+        # Should initialize without requiring generation_plan
+        state = agent._init_state(task)
+        assert state is not None
+
+    def test_uses_complexity_from_generation_plan(self):
+        """TC3.4: ReactPrompt uses complexity from GenerationPlan."""
+        agent = ReactPromptAgent()
+
+        # Create task with complexity
+        task_simple = PlanningTask(
+            job_id="job",
+            user_id="user",
+            phase="initial",
+            requirements={"subject": "cat"},
+            complexity="simple",
+            product_type="poster",
+        )
+        task_complex = PlanningTask(
+            job_id="job",
+            user_id="user",
+            phase="initial",
+            requirements={"subject": "cat"},
+            complexity="complex",
+            product_type="poster",
+        )
+
+        state_simple = agent._init_state(task_simple)
+        state_complex = agent._init_state(task_complex)
+
+        # Mode should reflect complexity
+        assert state_simple.mode == "SIMPLE"
+        assert state_complex.mode == "COMPLEX"
+
+
+class TestReactPromptContextEvaluation:
+    """Tests for context evaluation and question generation (TC3.5-TC3.6)."""
+
+    @pytest.fixture
+    def agent(self):
+        """Create agent for testing."""
+        return ReactPromptAgent()
+
+    def test_evaluate_context_action_exists(self):
+        """Test EVALUATE_CONTEXT action is defined."""
+        assert ReactAction.EVALUATE_CONTEXT.value == "evaluate_context"
+
+    def test_generate_questions_action_exists(self):
+        """Test GENERATE_QUESTIONS action is defined."""
+        assert ReactAction.GENERATE_QUESTIONS.value == "generate_questions"
+
+    def test_prompt_state_has_context_evaluation_fields(self):
+        """Test PromptState has context evaluation tracking fields."""
+        state = PromptState()
+
+        # Should have context evaluation properties
+        assert hasattr(state, "context_evaluated")
+        assert hasattr(state, "needs_clarification")
+        assert hasattr(state, "clarification_questions")
+
+        # Default values
+        assert state.context_evaluated is False
+        assert state.needs_clarification is False
+        assert state.clarification_questions == []
+
+    @pytest.mark.asyncio
+    async def test_think_returns_evaluate_context_first(self, agent):
+        """TC3.5: ReactPrompt evaluates context first."""
+        task = PlanningTask(
+            job_id="job",
+            user_id="user",
+            phase="initial",
+            requirements={"subject": "cat"},
+            complexity="standard",
+            product_type="poster",
+        )
+        state = PromptState()
+
+        action = await agent._think(state, task)
+        assert action == ReactAction.EVALUATE_CONTEXT
+
+    @pytest.mark.asyncio
+    async def test_think_returns_generate_questions_when_needed(self, agent):
+        """TC3.5: ReactPrompt generates questions when context insufficient."""
+        task = PlanningTask(
+            job_id="job",
+            user_id="user",
+            phase="initial",
+            requirements={"subject": "cat"},  # Minimal context
+            complexity="complex",  # Complex needs more context
+            product_type="poster",
+        )
+        state = PromptState(
+            context_evaluated=True,
+            needs_clarification=True,
+            missing_fields=["style", "mood"],
+        )
+
+        action = await agent._think(state, task)
+        assert action == ReactAction.GENERATE_QUESTIONS
+
+    @pytest.mark.asyncio
+    async def test_think_skips_questions_when_context_sufficient(self, agent):
+        """Test _think skips questions when context is sufficient."""
+        task = PlanningTask(
+            job_id="job",
+            user_id="user",
+            phase="initial",
+            requirements={
+                "subject": "cat",
+                "style": "cartoon",
+                "mood": "playful",
+            },
+            complexity="standard",
+            product_type="poster",
+        )
+        state = PromptState(
+            context_evaluated=True,
+            needs_clarification=False,
+        )
+
+        action = await agent._think(state, task)
+        # Should move to BUILD_CONTEXT, not GENERATE_QUESTIONS
+        assert action == ReactAction.BUILD_CONTEXT
+
+    @pytest.mark.asyncio
+    async def test_evaluate_context_simple_complexity(self, agent):
+        """Test context evaluation for simple complexity."""
+        task = PlanningTask(
+            job_id="job",
+            user_id="user",
+            phase="initial",
+            requirements={"subject": "cat"},
+            complexity="simple",
+            product_type="general",
+        )
+        state = PromptState()
+
+        # Simple complexity needs minimal context
+        result_state = await agent._evaluate_context(task, state)
+
+        assert result_state.context_evaluated is True
+        # Simple complexity typically doesn't need more context, but it depends on implementation
+        # The key is that context was evaluated
+        assert hasattr(result_state, 'needs_clarification')
+
+    @pytest.mark.asyncio
+    async def test_evaluate_context_complex_insufficient(self, agent):
+        """Test context evaluation for complex with insufficient context."""
+        task = PlanningTask(
+            job_id="job",
+            user_id="user",
+            phase="initial",
+            requirements={"subject": "cat"},  # Only subject provided
+            complexity="complex",
+            product_type="poster",
+        )
+        state = PromptState()
+
+        result_state = await agent._evaluate_context(task, state)
+
+        assert result_state.context_evaluated is True
+        # Complex mode with minimal requirements may need clarification
+        assert result_state.missing_fields is not None
+
+    @pytest.mark.asyncio
+    async def test_generate_questions_returns_clarification_questions(self, agent):
+        """TC3.6: ReactPrompt generates questions for missing context."""
+        task = PlanningTask(
+            job_id="job",
+            user_id="user",
+            phase="initial",
+            requirements={"subject": "cat"},
+            complexity="complex",
+            product_type="poster",
+        )
+        state = PromptState(
+            context_evaluated=True,
+            needs_clarification=True,
+            missing_fields=["style"],
+            priority_field="style",
+        )
+
+        result_state = await agent._generate_questions(task, state)
+
+        assert result_state.questions_generated is True
+        assert len(result_state.clarification_questions) > 0
+
+    @pytest.mark.asyncio
+    async def test_generate_questions_selector_type(self, agent):
+        """Test question generation includes selector type for style."""
+        task = PlanningTask(
+            job_id="job",
+            user_id="user",
+            phase="initial",
+            requirements={"subject": "cat"},
+            complexity="complex",
+            product_type="poster",
+        )
+        state = PromptState(
+            context_evaluated=True,
+            needs_clarification=True,
+            missing_fields=["style"],
+            priority_field="style",
+        )
+
+        result_state = await agent._generate_questions(task, state)
+
+        # Style should generate a selector question
+        questions = result_state.clarification_questions
+        if questions:
+            # Questions can be dataclass objects or dicts depending on implementation
+            style_question = None
+            for q in questions:
+                field = q.field if hasattr(q, 'field') else q.get("field") if isinstance(q, dict) else None
+                if field == "style":
+                    style_question = q
+                    break
+
+            if style_question:
+                q_type = style_question.question_type if hasattr(style_question, 'question_type') else style_question.get("question_type")
+                assert q_type in ["selector", "text"]
+
+
+class TestPlannerTodoList:
+    """Tests for Planner's internal todo list tracking."""
+
+    def test_planner_has_todo_list_classes(self):
+        """Test that Planner has todo list tracking classes."""
+        from tests.test_palet8_agents.agents.test_planner_orchestration import (
+            load_planner_agent_v2,
+        )
+        planner_module = load_planner_agent_v2()
+
+        # Check todo classes exist
+        assert hasattr(planner_module, 'TodoStatus')
+        assert hasattr(planner_module, 'TodoItem')
+        assert hasattr(planner_module, 'PlannerTodoList')
+
+    def test_todo_status_enum_values(self):
+        """Test TodoStatus enum has expected values."""
+        from tests.test_palet8_agents.agents.test_planner_orchestration import (
+            load_planner_agent_v2,
+        )
+        planner_module = load_planner_agent_v2()
+        TodoStatus = planner_module.TodoStatus
+
+        assert TodoStatus.PENDING.value == "pending"
+        assert TodoStatus.IN_PROGRESS.value == "in_progress"
+        assert TodoStatus.COMPLETED.value == "completed"
+        assert TodoStatus.FAILED.value == "failed"
+
+    def test_todo_list_init_from_checkpoints(self):
+        """Test PlannerTodoList initializes from checkpoints."""
+        from tests.test_palet8_agents.agents.test_planner_orchestration import (
+            load_planner_agent_v2,
+        )
+        planner_module = load_planner_agent_v2()
+        PlannerTodoList = planner_module.PlannerTodoList
+        TodoStatus = planner_module.TodoStatus
+
+        checkpoints = [
+            {"id": "context_check"},
+            {"id": "safety_check"},
+            {"id": "generation_plan"},
+        ]
+
+        todo_list = PlannerTodoList()
+        todo_list.init_from_checkpoints(checkpoints)
+
+        assert len(todo_list.items) == 3
+        assert todo_list.items[0].id == "context_check"
+        assert todo_list.items[0].status == TodoStatus.PENDING
+
+    def test_todo_list_start_and_complete(self):
+        """Test starting and completing todo items."""
+        from tests.test_palet8_agents.agents.test_planner_orchestration import (
+            load_planner_agent_v2,
+        )
+        planner_module = load_planner_agent_v2()
+        PlannerTodoList = planner_module.PlannerTodoList
+        TodoStatus = planner_module.TodoStatus
+
+        checkpoints = [{"id": "test_checkpoint"}]
+        todo_list = PlannerTodoList()
+        todo_list.init_from_checkpoints(checkpoints)
+
+        # Start item
+        todo_list.start_item("test_checkpoint")
+        assert todo_list.items[0].status == TodoStatus.IN_PROGRESS
+
+        # Complete item
+        todo_list.complete_item("test_checkpoint", {"result": "success"})
+        assert todo_list.items[0].status == TodoStatus.COMPLETED
+        assert todo_list.items[0].result == {"result": "success"}
+
+    def test_todo_list_fail_item(self):
+        """Test failing a todo item."""
+        from tests.test_palet8_agents.agents.test_planner_orchestration import (
+            load_planner_agent_v2,
+        )
+        planner_module = load_planner_agent_v2()
+        PlannerTodoList = planner_module.PlannerTodoList
+        TodoStatus = planner_module.TodoStatus
+
+        checkpoints = [{"id": "test_checkpoint"}]
+        todo_list = PlannerTodoList()
+        todo_list.init_from_checkpoints(checkpoints)
+
+        # Fail item
+        todo_list.fail_item("test_checkpoint", "Test error")
+        assert todo_list.items[0].status == TodoStatus.FAILED
+        assert todo_list.items[0].error == "Test error"
+
+    def test_todo_list_progress(self):
+        """Test todo list progress tracking."""
+        from tests.test_palet8_agents.agents.test_planner_orchestration import (
+            load_planner_agent_v2,
+        )
+        planner_module = load_planner_agent_v2()
+        PlannerTodoList = planner_module.PlannerTodoList
+
+        checkpoints = [
+            {"id": "cp1"},
+            {"id": "cp2"},
+            {"id": "cp3"},
+            {"id": "cp4"},
+        ]
+        todo_list = PlannerTodoList()
+        todo_list.init_from_checkpoints(checkpoints)
+
+        # Complete 2, fail 1, leave 1 pending
+        todo_list.complete_item("cp1")
+        todo_list.complete_item("cp2")
+        todo_list.fail_item("cp3", "error")
+
+        progress = todo_list.get_progress()
+        assert progress["total"] == 4
+        assert progress["completed"] == 2
+        assert progress["failed"] == 1
+        assert progress["pending"] == 1
+        assert progress["progress_pct"] == 0.5

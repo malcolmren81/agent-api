@@ -153,7 +153,7 @@ async def list_agent_logs(
         )
 
     except Exception as e:
-        logger.error("Error fetching agent logs", error=str(e), exc_info=True)
+        logger.error("Error fetching agent logs", error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -208,7 +208,7 @@ async def get_logs_by_task(task_id: str) -> List[AgentLogResponse]:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error fetching logs by task", task_id=task_id, error=str(e), exc_info=True)
+        logger.error("Error fetching logs by task", task_id=task_id, error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -257,7 +257,7 @@ async def get_agent_log(log_id: str) -> AgentLogResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error fetching agent log", log_id=log_id, error=str(e), exc_info=True)
+        logger.error("Error fetching agent log", log_id=log_id, error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -332,5 +332,5 @@ async def get_routing_stats(
         )
 
     except Exception as e:
-        logger.error("Error calculating routing stats", error=str(e), exc_info=True)
+        logger.error("Error calculating routing stats", error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

@@ -188,7 +188,7 @@ class SafetyAgent(BaseAgent):
             logger.error(
                 "safety.config.load_error",
                 config_path=str(self._config_path),
-                error=str(e),
+                error_detail=str(e),
                 error_type=type(e).__name__,
             )
             return {}
@@ -287,7 +287,7 @@ class SafetyAgent(BaseAgent):
             logger.error(
                 "safety.run.error",
                 job_id=context.job_id,
-                error=str(e),
+                error_detail=str(e),
                 error_type=type(e).__name__,
                 exc_info=True,
             )
@@ -392,7 +392,7 @@ class SafetyAgent(BaseAgent):
                 "safety.event.error",
                 job_id=job_id,
                 event_type=event_type,
-                error=str(e),
+                error_detail=str(e),
                 error_type=type(e).__name__,
             )
             return None
@@ -507,7 +507,7 @@ class SafetyAgent(BaseAgent):
         except Exception as e:
             logger.warning(
                 "safety.llm_check.failed",
-                error=str(e),
+                error_detail=str(e),
                 error_type=type(e).__name__,
             )
 

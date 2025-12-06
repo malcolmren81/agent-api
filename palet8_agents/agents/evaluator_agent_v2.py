@@ -149,7 +149,7 @@ class EvaluatorAgentV2(BaseAgent):
             logger.error(
                 "evaluator_v2.run.error",
                 phase=phase,
-                error=str(e),
+                error_detail=str(e),
                 error_type=type(e).__name__,
                 exc_info=True,
             )

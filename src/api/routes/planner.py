@@ -35,5 +35,5 @@ async def create_plan(request: InteractiveRequest) -> PlannerResponse:
         )
 
     except Exception as e:
-        logger.error("Planner error", error=str(e), exc_info=True)
+        logger.error("Planner error", error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

@@ -26,7 +26,8 @@ class ContextAnalysisError(Exception):
 @dataclass
 class ContextConfig:
     """Configuration for context analysis."""
-    required_fields: List[str] = field(default_factory=lambda: ["subject"])
+    # complexity is required first to determine generation mode (Relax/Standard/Complex)
+    required_fields: List[str] = field(default_factory=lambda: ["complexity", "subject"])
     important_fields: List[str] = field(default_factory=lambda: [
         "style", "aesthetic", "colors", "product_type"
     ])
@@ -34,16 +35,18 @@ class ContextConfig:
         "mood", "composition", "background", "lighting"
     ])
     completeness_weights: Dict[str, float] = field(default_factory=lambda: {
-        "subject": 0.40,
+        "complexity": 0.10,  # Required - determines generation mode
+        "subject": 0.35,
         "style": 0.15,
         "aesthetic": 0.15,
         "colors": 0.10,
         "product_type": 0.10,
-        "mood": 0.05,
-        "composition": 0.05,
+        "mood": 0.03,
+        "composition": 0.02,
     })
     min_completeness: float = 0.5
     clarifying_questions: Dict[str, str] = field(default_factory=lambda: {
+        "complexity": "How much detail would you like? Choose a generation mode.",
         "subject": "What would you like the image to show? Please describe the main subject.",
         "style": "What style are you looking for? (e.g., realistic, cartoon, minimalist)",
         "aesthetic": "What aesthetic or visual style do you prefer?",

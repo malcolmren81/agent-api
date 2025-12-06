@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 class ModelSelectionConfig:
     """Configuration for model selection service."""
 
-    # Default model if no compatible models found
-    default_model: str = "flux-1-kontext-pro"
+    # Default model if no compatible models found (loaded from config)
+    default_model: Optional[str] = None
 
     # Dual pipeline triggers
     dual_pipeline_triggers: Dict[str, List[str]] = field(default_factory=lambda: {
@@ -49,27 +49,27 @@ class ModelSelectionConfig:
         ],
     })
 
-    # Dual pipeline configurations
+    # Dual pipeline configurations (models loaded from image_models_config.yaml)
     dual_pipelines: Dict[str, Dict[str, str]] = field(default_factory=lambda: {
         "creative_art": {
             "name": "High-Creative Art Pipeline",
-            "stage_1_model": "midjourney-v7",
+            "stage_1_model": None,
             "stage_1_purpose": "Generate creative, non-realistic composition",
-            "stage_2_model": "nano-banana-2-pro",
+            "stage_2_model": None,
             "stage_2_purpose": "Refine characters, add/correct text, adjust elements",
         },
         "photorealistic": {
             "name": "Photorealistic Pipeline",
-            "stage_1_model": "imagen-4-ultra",
+            "stage_1_model": None,
             "stage_1_purpose": "Generate photorealistic base with exceptional detail",
-            "stage_2_model": "nano-banana-2-pro",
+            "stage_2_model": None,
             "stage_2_purpose": "Character edits, text overlays, stylistic adjustments",
         },
         "layout_poster": {
             "name": "Layout & Poster Design Pipeline",
-            "stage_1_model": "flux-2-flex",
+            "stage_1_model": None,
             "stage_1_purpose": "Generate layout with accurate text placement",
-            "stage_2_model": "qwen-image-edit",
+            "stage_2_model": None,
             "stage_2_purpose": "Targeted edits, text correction, color adjustments",
         },
     })
@@ -131,11 +131,15 @@ class ModelSelectionService:
     - Estimating costs and latency
     """
 
+    # Default path to image models config
+    DEFAULT_MODELS_CONFIG = Path(__file__).parent.parent.parent / "config" / "image_models_config.yaml"
+
     def __init__(
         self,
         model_info_service: Optional[Any] = None,
         config: Optional[ModelSelectionConfig] = None,
         config_path: Optional[Path] = None,
+        models_config_path: Optional[Path] = None,
     ):
         """
         Initialize model selection service.
@@ -144,12 +148,17 @@ class ModelSelectionService:
             model_info_service: Optional ModelInfoService for model data
             config: Optional custom configuration
             config_path: Optional path to config file
+            models_config_path: Optional path to image_models_config.yaml
         """
         self._model_info_service = model_info_service
         self._config = config or ModelSelectionConfig()
 
         if config_path:
             self._load_config(config_path)
+
+        # Auto-load models from image_models_config.yaml
+        models_path = models_config_path or self.DEFAULT_MODELS_CONFIG
+        self._load_models_config(models_path)
 
     def _load_config(self, config_path: Path) -> None:
         """Load configuration from YAML file."""
@@ -178,6 +187,47 @@ class ModelSelectionService:
 
         except Exception as e:
             logger.warning(f"Failed to load pipeline config: {e}")
+
+    def _load_models_config(self, config_path: Path) -> None:
+        """Load models from image_models_config.yaml."""
+        try:
+            if not config_path.exists():
+                logger.warning(
+                    f"model_selection_service.models_config.not_found: {config_path}"
+                )
+                return
+
+            with open(config_path, "r") as f:
+                data = yaml.safe_load(f)
+
+            # Load default model from scenario_selection (first model in art_no_reference)
+            scenario_selection = data.get("scenario_selection", {})
+            art_no_ref = scenario_selection.get("art_no_reference", {})
+            priority_models = art_no_ref.get("priority_models", {})
+            if priority_models and not self._config.default_model:
+                # Get first priority model as default
+                first_priority = min(priority_models.keys())
+                self._config.default_model = priority_models[first_priority]
+
+            # Load dual pipeline models
+            dual_pipeline = data.get("dual_pipeline", {})
+            for pipeline_name, pipeline_config in dual_pipeline.items():
+                if pipeline_name in self._config.dual_pipelines:
+                    stage_1 = pipeline_config.get("stage_1", {})
+                    stage_2 = pipeline_config.get("stage_2", {})
+
+                    self._config.dual_pipelines[pipeline_name]["stage_1_model"] = stage_1.get("model")
+                    self._config.dual_pipelines[pipeline_name]["stage_1_purpose"] = stage_1.get("purpose")
+                    self._config.dual_pipelines[pipeline_name]["stage_2_model"] = stage_2.get("model")
+                    self._config.dual_pipelines[pipeline_name]["stage_2_purpose"] = stage_2.get("purpose")
+
+            logger.info(
+                f"model_selection_service.models_config.loaded: default={self._config.default_model}, "
+                f"pipelines={list(dual_pipeline.keys())}"
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to load models config: {e}")
 
     # =========================================================================
     # PUBLIC API

@@ -31,6 +31,8 @@ logger = get_logger(__name__)
 
 class ReactAction(Enum):
     """Actions available in the ReAct loop."""
+    EVALUATE_CONTEXT = "evaluate_context"  # Check what context is available/missing
+    GENERATE_QUESTIONS = "generate_questions"  # Generate clarification questions if needed
     BUILD_CONTEXT = "build_context"
     SELECT_DIMENSIONS = "select_dimensions"
     COMPOSE_PROMPT = "compose_prompt"
@@ -40,8 +42,54 @@ class ReactAction(Enum):
 
 
 @dataclass
+class ClarificationQuestion:
+    """Question to route through Pali to user."""
+    question_type: str  # "text", "selector", "image_upload"
+    field: str
+    question_text: str
+    selector_id: Optional[str] = None
+    options: Optional[List[str]] = None
+    required: bool = False
+    priority: int = 0  # Lower = higher priority
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "question_type": self.question_type,
+            "field": self.field,
+            "question_text": self.question_text,
+            "selector_id": self.selector_id,
+            "options": self.options,
+            "required": self.required,
+            "priority": self.priority,
+        }
+
+
+# Field to selector mapping for clarification questions
+FIELD_SELECTOR_MAP = {
+    "style": ("aesthetic_style", "selector"),
+    "product_type": ("product_category", "selector"),
+    "dimensions": ("aspect_ratio", "selector"),
+    "character": ("system_character", "selector"),
+    "reference_image": ("reference_image", "image_upload"),
+    "text_content": ("text_in_image", "text"),
+    "mood": (None, "text"),
+    "colors": (None, "text"),
+}
+
+
+@dataclass
 class PromptState:
     """Internal state for the ReAct loop."""
+    # Context evaluation state (NEW)
+    context_evaluated: bool = False
+    available_fields: List[str] = field(default_factory=list)
+    missing_fields: List[str] = field(default_factory=list)
+    needs_clarification: bool = False
+    priority_field: Optional[str] = None
+    questions_generated: bool = False
+    clarification_questions: List[ClarificationQuestion] = field(default_factory=list)
+
     # Context information
     user_history: List[Dict[str, Any]] = field(default_factory=list)
     art_references: List[Dict[str, Any]] = field(default_factory=list)
@@ -210,7 +258,7 @@ class ReactPromptAgent(BaseAgent):
         Execute the ReAct loop to build a PromptPlan.
 
         Args:
-            context: Shared execution context containing planning_task
+            context: Shared execution context containing planning_task and generation_plan
             user_input: Optional user input (not typically used)
 
         Returns:
@@ -229,16 +277,20 @@ class ReactPromptAgent(BaseAgent):
                     error_code="MISSING_TASK",
                 )
 
+            # Extract GenerationPlan from context (from GenPlan agent)
+            generation_plan_data = context.metadata.get("generation_plan")
+
             task = PlanningTask.from_dict(planning_task_data)
             logger.info(
                 "react_prompt.run.start",
                 job_id=task.job_id,
                 phase=task.phase,
                 has_previous_plan=task.previous_plan is not None,
+                has_generation_plan=generation_plan_data is not None,
             )
 
-            # Initialize state
-            state = self._init_state(task)
+            # Initialize state with generation plan
+            state = self._init_state(task, generation_plan_data)
             steps = 0
 
             # ReAct loop
@@ -252,7 +304,31 @@ class ReactPromptAgent(BaseAgent):
                 )
 
                 # ACT: Execute the action
-                if next_action == ReactAction.BUILD_CONTEXT:
+                if next_action == ReactAction.EVALUATE_CONTEXT:
+                    state = await self._evaluate_context(task, state)
+                elif next_action == ReactAction.GENERATE_QUESTIONS:
+                    state = await self._generate_questions(task, state)
+                    # If questions were generated, return early with clarification result
+                    if state.needs_clarification and state.clarification_questions:
+                        logger.info(
+                            "react_prompt.clarification.needed",
+                            job_id=task.job_id,
+                            missing_fields=state.missing_fields,
+                            question_count=len(state.clarification_questions),
+                        )
+                        # Return clarification result to Planner for routing through Pali
+                        return self._create_result(
+                            success=True,
+                            data={
+                                "needs_clarification": True,
+                                "missing_fields": state.missing_fields,
+                                "priority_field": state.priority_field,
+                                "questions": [q.to_dict() for q in state.clarification_questions],
+                            },
+                            error=None,
+                            error_code=None,
+                        )
+                elif next_action == ReactAction.BUILD_CONTEXT:
                     state = await self._build_context(task, state)
                 elif next_action == ReactAction.SELECT_DIMENSIONS:
                     state = await self._select_dimensions(task, state)
@@ -310,24 +386,56 @@ class ReactPromptAgent(BaseAgent):
         except Exception as e:
             logger.error(
                 "react_prompt.run.error",
-                error=str(e),
+                error_detail=str(e),
                 error_type=type(e).__name__,
                 exc_info=True,
             )
             return self._create_result(
                 success=False,
                 data=None,
-                error=str(e),
+                error_detail=str(e),
                 error_code="REACT_ERROR",
             )
 
-    def _init_state(self, task: PlanningTask) -> PromptState:
-        """Initialize state based on task phase."""
-        state = PromptState()
-        state.mode = task.complexity.upper() if task.complexity else "STANDARD"
+    def _init_state(
+        self,
+        task: PlanningTask,
+        generation_plan_data: Optional[Dict[str, Any]] = None,
+    ) -> PromptState:
+        """
+        Initialize state based on task phase and generation plan.
 
-        # Extract provider_params from requirements if specified
-        state.provider_params = task.requirements.get("provider_params", {})
+        Args:
+            task: The planning task with requirements
+            generation_plan_data: GenerationPlan from GenPlan agent (contains
+                provider_params, model_input_params, complexity, etc.)
+
+        Returns:
+            Initialized PromptState
+        """
+        state = PromptState()
+
+        # Get mode/complexity from generation_plan (preferred) or task
+        if generation_plan_data:
+            complexity = generation_plan_data.get("complexity", "standard")
+            state.mode = complexity.upper()
+            # Get provider_params from GenPlan (model-specific parameters)
+            state.provider_params = generation_plan_data.get("provider_params", {})
+            # Merge model_input_params (steps, guidance_scale, etc.)
+            model_input_params = generation_plan_data.get("model_input_params", {})
+            for key in ["steps", "guidance_scale", "width", "height", "seed"]:
+                if key in model_input_params and key not in state.provider_params:
+                    state.provider_params[key] = model_input_params[key]
+            logger.debug(
+                "react_prompt.init_state.from_generation_plan",
+                mode=state.mode,
+                provider_params_keys=list(state.provider_params.keys()),
+            )
+        else:
+            # Fallback to task complexity
+            state.mode = task.complexity.upper() if task.complexity else "STANDARD"
+            # Extract provider_params from requirements if specified
+            state.provider_params = task.requirements.get("provider_params", {})
 
         # For fix_plan or edit, seed with previous data
         if task.previous_plan:
@@ -336,7 +444,7 @@ class ReactPromptAgent(BaseAgent):
             dims_data = task.previous_plan.get("dimensions", {})
             if dims_data:
                 state.dimensions = PromptDimensions.from_dict(dims_data)
-            # Preserve provider_params from previous plan if not overridden
+            # Preserve provider_params from previous plan if not overridden by generation_plan
             if not state.provider_params and task.previous_plan.get("provider_params"):
                 state.provider_params = task.previous_plan.get("provider_params", {})
 
@@ -347,7 +455,7 @@ class ReactPromptAgent(BaseAgent):
         Decide next action based on current state and task phase.
 
         The thinking logic varies by phase:
-        - initial: Full pipeline from context to quality
+        - initial: Full pipeline from context evaluation to quality
         - fix_plan: Focus on evaluation and refinement
         - edit: Minimal changes to preserve existing prompt
         """
@@ -371,6 +479,13 @@ class ReactPromptAgent(BaseAgent):
             return ReactAction.DONE
 
         # For initial phase, full pipeline
+        # Step 1: Evaluate context sufficiency
+        if not state.context_evaluated:
+            return ReactAction.EVALUATE_CONTEXT
+        # Step 2: Generate questions if clarification needed
+        if state.needs_clarification and not state.questions_generated:
+            return ReactAction.GENERATE_QUESTIONS
+        # Step 3+: Continue with normal flow if context is sufficient
         if not state.has_context:
             return ReactAction.BUILD_CONTEXT
         if not state.has_dimensions:
@@ -386,6 +501,190 @@ class ReactPromptAgent(BaseAgent):
 
     # Threshold for determining if RAG context is sufficient
     MIN_CONTEXT_ITEMS = 2  # Minimum combined references/prompts before triggering web search
+
+    # Field priority for clarification questions (lower = higher priority)
+    FIELD_PRIORITY = {
+        "subject": 1,
+        "product_type": 2,
+        "style": 3,
+        "dimensions": 4,
+        "character": 5,
+        "mood": 6,
+        "colors": 7,
+        "reference_image": 8,
+        "text_content": 9,
+    }
+
+    # Minimum context sufficiency score for different complexity levels
+    MIN_CONTEXT_SCORE = {
+        "simple": 0.3,      # subject only is sufficient
+        "standard": 0.5,    # subject + style preferred
+        "complex": 0.7,     # subject + style + mood + detailed direction needed
+    }
+
+    async def _evaluate_context(self, task: PlanningTask, state: PromptState) -> PromptState:
+        """
+        Evaluate if context is sufficient for generation.
+
+        Checks what's provided vs what's missing based on complexity level
+        (from GenerationPlan).
+
+        Flow:
+        1. Get available fields from requirements
+        2. Determine required fields based on complexity
+        3. Calculate sufficiency score
+        4. Mark if clarification is needed
+        """
+        logger.info(
+            "react_prompt.context.evaluate.start",
+            job_id=task.job_id,
+            complexity=state.mode.lower(),
+        )
+
+        requirements = task.requirements or {}
+        complexity = state.mode.lower()
+
+        # Check what fields are available
+        available = []
+        missing = []
+
+        # Required field: subject
+        if requirements.get("subject"):
+            available.append("subject")
+        else:
+            missing.append("subject")
+
+        # Check optional fields
+        optional_fields = [
+            ("style", requirements.get("style") or requirements.get("aesthetic")),
+            ("product_type", requirements.get("product_type")),
+            ("mood", requirements.get("mood")),
+            ("colors", requirements.get("colors")),
+            ("dimensions", requirements.get("dimensions") or requirements.get("aspect_ratio")),
+            ("reference_image", requirements.get("reference_image") or requirements.get("has_reference")),
+            ("text_content", requirements.get("text_content") or requirements.get("text")),
+            ("character", requirements.get("character")),
+        ]
+
+        for field_name, field_value in optional_fields:
+            if field_value:
+                available.append(field_name)
+            else:
+                missing.append(field_name)
+
+        # Calculate sufficiency score
+        total_fields = len(available) + len(missing)
+        score = len(available) / total_fields if total_fields > 0 else 0.0
+
+        # Determine if clarification is needed based on complexity
+        min_score = self.MIN_CONTEXT_SCORE.get(complexity, 0.5)
+        needs_clarification = score < min_score
+
+        # Subject is always required
+        if "subject" in missing:
+            needs_clarification = True
+
+        # Find highest priority missing field
+        priority_field = None
+        if missing:
+            sorted_missing = sorted(missing, key=lambda f: self.FIELD_PRIORITY.get(f, 99))
+            priority_field = sorted_missing[0]
+
+        # Update state
+        state.context_evaluated = True
+        state.available_fields = available
+        state.missing_fields = missing
+        state.needs_clarification = needs_clarification
+        state.priority_field = priority_field
+
+        logger.info(
+            "react_prompt.context.evaluate.complete",
+            job_id=task.job_id,
+            available_count=len(available),
+            missing_count=len(missing),
+            score=round(score, 2),
+            needs_clarification=needs_clarification,
+            priority_field=priority_field,
+        )
+
+        return state
+
+    async def _generate_questions(self, task: PlanningTask, state: PromptState) -> PromptState:
+        """
+        Generate clarification questions for missing fields.
+
+        Maps missing fields to question types:
+        - selector: UI selector component (style, product_type, etc.)
+        - text: Free-form text input
+        - image_upload: Reference image upload
+        """
+        logger.info(
+            "react_prompt.questions.generate.start",
+            job_id=task.job_id,
+            missing_fields=state.missing_fields,
+        )
+
+        questions = []
+
+        for field in state.missing_fields:
+            selector_info = FIELD_SELECTOR_MAP.get(field, (None, "text"))
+            selector_id, question_type = selector_info
+
+            # Generate question text based on field
+            question_text = self._get_question_text(field)
+
+            # Get options for selector type
+            options = self._get_field_options(field) if question_type == "selector" else None
+
+            question = ClarificationQuestion(
+                question_type=question_type,
+                field=field,
+                question_text=question_text,
+                selector_id=selector_id,
+                options=options,
+                required=(field == "subject"),  # Only subject is truly required
+                priority=self.FIELD_PRIORITY.get(field, 99),
+            )
+            questions.append(question)
+
+        # Sort by priority
+        questions.sort(key=lambda q: q.priority)
+
+        state.questions_generated = True
+        state.clarification_questions = questions
+
+        logger.info(
+            "react_prompt.questions.generate.complete",
+            job_id=task.job_id,
+            question_count=len(questions),
+            priority_field=state.priority_field,
+        )
+
+        return state
+
+    def _get_question_text(self, field: str) -> str:
+        """Get natural language question text for a field."""
+        question_map = {
+            "subject": "What would you like to create? Please describe the main subject of your image.",
+            "style": "What visual style would you like for your image?",
+            "product_type": "What type of product are you creating? (e.g., poster, social media, album art)",
+            "mood": "What mood or feeling should the image convey?",
+            "colors": "Do you have any color preferences for your image?",
+            "dimensions": "What dimensions or aspect ratio would you like?",
+            "reference_image": "Would you like to upload a reference image for inspiration?",
+            "text_content": "Do you want any text or typography in your image? If so, what text?",
+            "character": "Would you like to use a specific character or persona?",
+        }
+        return question_map.get(field, f"Please provide information about the {field}.")
+
+    def _get_field_options(self, field: str) -> Optional[List[str]]:
+        """Get predefined options for selector fields."""
+        options_map = {
+            "style": ["photorealistic", "illustration", "vintage", "minimalist", "bold", "artistic"],
+            "product_type": ["poster", "social media", "album art", "banner", "icon", "product shot"],
+            "dimensions": ["square (1:1)", "landscape (16:9)", "portrait (9:16)", "wide (21:9)"],
+        }
+        return options_map.get(field)
 
     async def _build_context(self, task: PlanningTask, state: PromptState) -> PromptState:
         """
@@ -537,7 +836,7 @@ class ReactPromptAgent(BaseAgent):
         except Exception as e:
             logger.warning(
                 "react_prompt.web_search.failed",
-                error=str(e),
+                error_detail=str(e),
                 error_type=type(e).__name__,
             )
 
@@ -637,15 +936,15 @@ class ReactPromptAgent(BaseAgent):
             logger.warning(
                 "react_prompt.compose.fallback",
                 job_id=task.job_id,
-                error=str(e),
+                error_detail=str(e),
                 error_type=type(e).__name__,
             )
             # Fallback to simple template
             state.prompt = self._build_fallback_prompt(state)
             state.negative_prompt = self._build_fallback_negative()
 
-        # Build/enhance provider_params based on mode and style if not already set
-        state.provider_params = self._build_provider_params(task, state)
+        # Note: provider_params are now set by GenPlan agent and passed via
+        # generation_plan in context. They are initialized in _init_state().
 
         return state
 
@@ -775,78 +1074,10 @@ class ReactPromptAgent(BaseAgent):
         """Build a standard fallback negative prompt."""
         return "blurry, low quality, distorted, watermark, signature, text"
 
-    def _build_provider_params(
-        self,
-        task: PlanningTask,
-        state: PromptState,
-    ) -> Dict[str, Any]:
-        """
-        Build provider-specific generation parameters.
-
-        Merges user-specified params with mode-based defaults.
-        These are passed through to the final image generation.
-
-        Args:
-            task: The planning task with requirements
-            state: Current prompt state with mode and dimensions
-
-        Returns:
-            Dict of provider parameters for generation
-        """
-        # Start with any user-specified params
-        params = dict(state.provider_params)
-
-        # Apply mode-based defaults if not already set
-        mode = state.mode.upper()
-
-        # Steps: higher for complex/quality modes
-        if "steps" not in params:
-            if mode == "ADVANCED" or mode == "COMPLEX":
-                params["steps"] = 40
-            elif mode == "STANDARD":
-                params["steps"] = 30
-            else:  # SIMPLE/RELAX
-                params["steps"] = 25
-
-        # Guidance scale: higher for more prompt adherence
-        if "guidance_scale" not in params:
-            if mode == "ADVANCED" or mode == "COMPLEX":
-                params["guidance_scale"] = 8.0
-            elif mode == "STANDARD":
-                params["guidance_scale"] = 7.5
-            else:
-                params["guidance_scale"] = 7.0
-
-        # Product-specific adjustments
-        product_type = task.product_type or ""
-        if product_type in ["poster", "wall_art", "canvas"]:
-            # Higher quality for wall art
-            if "steps" not in state.provider_params:
-                params["steps"] = max(params.get("steps", 30), 35)
-
-        # Print method adjustments
-        if task.print_method:
-            if task.print_method == "screen_print":
-                # Screen print needs cleaner edges
-                params.setdefault("scheduler", "euler_ancestral")
-            elif task.print_method == "dtg":
-                # DTG can handle more detail
-                if "steps" not in state.provider_params:
-                    params["steps"] = max(params.get("steps", 30), 35)
-
-        # Style-based adjustments from dimensions
-        if state.dimensions:
-            aesthetic = state.dimensions.aesthetic or ""
-            if "photorealistic" in aesthetic.lower() or "realistic" in aesthetic.lower():
-                params.setdefault("scheduler", "dpm_2m_karras")
-            elif "cartoon" in aesthetic.lower() or "anime" in aesthetic.lower():
-                params.setdefault("scheduler", "euler")
-
-        # Preserve seed if specified in requirements
-        if task.requirements.get("seed") is not None:
-            params["seed"] = task.requirements["seed"]
-
-        return params
+    # NOTE: _build_provider_params has been removed.
+    # Provider parameters (steps, guidance_scale, scheduler, etc.) are now
+    # handled by GenPlan agent and passed via generation_plan in context.
+    # See GenPlanAgent._extract_parameters() for the implementation.
 
     async def __aenter__(self) -> "ReactPromptAgent":
         """Async context manager entry."""

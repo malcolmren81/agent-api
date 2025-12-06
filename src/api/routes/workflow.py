@@ -161,7 +161,7 @@ async def get_workflow(task_id: str) -> WorkflowResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error fetching workflow", task_id=task_id, error=str(e), exc_info=True)
+        logger.error("Error fetching workflow", task_id=task_id, error_detail=str(e), exc_info=True)
         await prisma.disconnect()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -247,7 +247,7 @@ async def get_active_workflows(
         return active_workflows
 
     except Exception as e:
-        logger.error("Error fetching active workflows", error=str(e), exc_info=True)
+        logger.error("Error fetching active workflows", error_detail=str(e), exc_info=True)
         await prisma.disconnect()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -368,13 +368,13 @@ async def list_workflows(
                     )
                 )
             except Exception as e:
-                logger.warning(f"Error processing workflow {task_id}", error=str(e))
+                logger.warning(f"Error processing workflow {task_id}", error_detail=str(e))
                 continue
 
         await prisma.disconnect()
         return workflows
 
     except Exception as e:
-        logger.error("Error listing workflows", error=str(e), exc_info=True)
+        logger.error("Error listing workflows", error_detail=str(e), exc_info=True)
         await prisma.disconnect()
         raise HTTPException(status_code=500, detail=str(e))

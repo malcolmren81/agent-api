@@ -110,7 +110,7 @@ async def list_templates(
         )
 
     except Exception as e:
-        logger.error("Error fetching templates", error=str(e), exc_info=True)
+        logger.error("Error fetching templates", error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -142,7 +142,7 @@ async def get_template(template_id: str) -> TemplateResponse:
         raise
     except Exception as e:
         logger.error(
-            "Error fetching template", template_id=template_id, error=str(e), exc_info=True
+            "Error fetching template", template_id=template_id, error_detail=str(e), exc_info=True
         )
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -197,7 +197,7 @@ async def create_template(request: CreateTemplateRequest) -> TemplateResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error creating template", error=str(e), exc_info=True)
+        logger.error("Error creating template", error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -272,7 +272,7 @@ async def update_template(
         logger.error(
             "Error updating template",
             template_id=template_id,
-            error=str(e),
+            error_detail=str(e),
             exc_info=True,
         )
         raise HTTPException(status_code=500, detail=str(e))
@@ -325,7 +325,7 @@ async def delete_template(template_id: str, hard_delete: bool = Query(False)):
         logger.error(
             "Error deleting template",
             template_id=template_id,
-            error=str(e),
+            error_detail=str(e),
             exc_info=True,
         )
         raise HTTPException(status_code=500, detail=str(e))
@@ -358,7 +358,7 @@ async def list_templates_by_category(category: TemplateCategory) -> List[Templat
         logger.error(
             "Error fetching templates by category",
             category=category.value,
-            error=str(e),
+            error_detail=str(e),
             exc_info=True,
         )
         raise HTTPException(status_code=500, detail=str(e))
@@ -424,5 +424,5 @@ async def get_template_stats() -> TemplateStatsResponse:
         )
 
     except Exception as e:
-        logger.error("Error calculating template stats", error=str(e), exc_info=True)
+        logger.error("Error calculating template stats", error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,9 +1,13 @@
 """
 Text LLM Service
 
-High-level service for text generation using LLM models via OpenRouter.
-Provides methods for text generation, prompt rewriting, clarifying questions,
-and conversation summarization with automatic failover support.
+Pure model tooling service for text generation using LLM models via OpenRouter.
+Provides generic text generation with automatic failover support.
+
+This service has NO domain-specific logic or system prompts.
+Domain-specific prompts belong in:
+- PromptComposerService: Prompt composition
+- ReasoningService: Quality assessment, classification, etc.
 
 Documentation Reference: Section 4.1
 """
@@ -227,191 +231,6 @@ class TextLLMService:
             **kwargs,
         ):
             yield chunk
-
-    async def rewrite_prompt(
-        self,
-        original_prompt: str,
-        constraints: Optional[Dict[str, Any]] = None,
-        profile_name: Optional[str] = None,
-    ) -> str:
-        """
-        Rewrite a prompt to improve quality.
-
-        Args:
-            original_prompt: Original user prompt
-            constraints: Optional constraints (style, format, etc.)
-            profile_name: Model profile to use
-
-        Returns:
-            Rewritten prompt string
-        """
-        constraint_text = ""
-        if constraints:
-            constraint_items = [f"- {k}: {v}" for k, v in constraints.items()]
-            constraint_text = f"\n\nConstraints:\n" + "\n".join(constraint_items)
-
-        system_prompt = """You are an expert prompt engineer for image generation.
-Your task is to rewrite the user's prompt to be more effective for AI image generation.
-
-Guidelines:
-- Be specific and descriptive
-- Include style, lighting, and composition details
-- Maintain the original intent
-- Use clear, unambiguous language
-- Optimize for the target model's capabilities
-
-Return ONLY the rewritten prompt, no explanations."""
-
-        user_prompt = f"""Original prompt: {original_prompt}{constraint_text}
-
-Rewrite this prompt for optimal image generation:"""
-
-        result = await self.generate_text(
-            prompt=user_prompt,
-            system_prompt=system_prompt,
-            profile_name=profile_name or "planner",
-            temperature=0.3,
-        )
-
-        return result.content.strip()
-
-    async def generate_clarifying_questions(
-        self,
-        context: str,
-        current_requirements: Optional[Dict[str, Any]] = None,
-        max_questions: int = 3,
-        profile_name: Optional[str] = None,
-    ) -> List[str]:
-        """
-        Generate clarifying questions to gather more requirements.
-
-        Args:
-            context: Current conversation context
-            current_requirements: Requirements gathered so far
-            max_questions: Maximum number of questions to generate
-            profile_name: Model profile to use
-
-        Returns:
-            List of clarifying question strings
-        """
-        requirements_text = ""
-        if current_requirements:
-            req_items = [f"- {k}: {v}" for k, v in current_requirements.items()]
-            requirements_text = f"\n\nCurrent requirements:\n" + "\n".join(req_items)
-
-        system_prompt = f"""You are a helpful assistant gathering requirements for image generation.
-Based on the conversation, generate up to {max_questions} clarifying questions to better understand the user's needs.
-
-Guidelines:
-- Ask about missing but important details (style, colors, composition, mood)
-- Be concise and specific
-- Focus on what would most improve the generation result
-- Don't repeat information already provided
-
-Return each question on a new line, numbered (1., 2., etc.)"""
-
-        user_prompt = f"""Conversation context:
-{context}{requirements_text}
-
-Generate clarifying questions:"""
-
-        result = await self.generate_text(
-            prompt=user_prompt,
-            system_prompt=system_prompt,
-            profile_name=profile_name or "pali",
-            temperature=0.5,
-        )
-
-        # Parse questions from response
-        questions = []
-        for line in result.content.strip().split("\n"):
-            line = line.strip()
-            if line and (line[0].isdigit() or line.startswith("-")):
-                # Remove numbering/bullets
-                question = line.lstrip("0123456789.-) ").strip()
-                if question and question.endswith("?"):
-                    questions.append(question)
-
-        return questions[:max_questions]
-
-    async def summarize_conversation(
-        self,
-        messages: List[Dict[str, str]],
-        max_length: int = 200,
-        profile_name: Optional[str] = None,
-    ) -> str:
-        """
-        Summarize a conversation history.
-
-        Args:
-            messages: List of message dicts with 'role' and 'content'
-            max_length: Maximum summary length in words
-            profile_name: Model profile to use
-
-        Returns:
-            Summary string
-        """
-        # Format conversation
-        conversation_text = "\n".join([
-            f"{msg['role'].capitalize()}: {msg['content']}"
-            for msg in messages
-        ])
-
-        system_prompt = f"""Summarize the following conversation concisely.
-Focus on key decisions, requirements, and outcomes.
-Maximum {max_length} words."""
-
-        result = await self.generate_text(
-            prompt=f"Conversation:\n{conversation_text}\n\nSummary:",
-            system_prompt=system_prompt,
-            profile_name=profile_name or "planner",
-            temperature=0.3,
-            max_tokens=max_length * 2,  # Approximate tokens
-        )
-
-        return result.content.strip()
-
-    async def classify_intent(
-        self,
-        text: str,
-        categories: List[str],
-        profile_name: Optional[str] = None,
-    ) -> str:
-        """
-        Classify text into one of the given categories.
-
-        Args:
-            text: Text to classify
-            categories: List of possible categories
-            profile_name: Model profile to use
-
-        Returns:
-            Selected category string
-        """
-        categories_text = "\n".join([f"- {cat}" for cat in categories])
-
-        system_prompt = f"""Classify the following text into exactly one of these categories:
-{categories_text}
-
-Respond with ONLY the category name, nothing else."""
-
-        result = await self.generate_text(
-            prompt=text,
-            system_prompt=system_prompt,
-            profile_name=profile_name or "safety",
-            temperature=0.0,  # Deterministic
-            max_tokens=50,
-        )
-
-        # Clean and validate response
-        response = result.content.strip().lower()
-        for category in categories:
-            if category.lower() in response or response in category.lower():
-                return category
-
-        # Return first category as fallback
-        logger.warning(f"Could not match response '{response}' to categories, using first")
-        return categories[0]
 
     def _to_result(self, response: LLMResponse, used_fallback: bool) -> TextGenerationResult:
         """Convert LLMResponse to TextGenerationResult."""

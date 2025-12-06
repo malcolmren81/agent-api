@@ -17,6 +17,7 @@ import httpx
 import asyncio
 import base64
 import yaml
+import uuid
 
 from palet8_agents.core.config import get_config
 
@@ -189,13 +190,19 @@ class ImageGenerationService:
         self._client: Optional[httpx.AsyncClient] = None
         self._config = get_config()
         self._model_costs: Dict[str, float] = {}
-        self._load_model_costs()
+        self._model_air_ids: Dict[str, str] = {}  # model_name -> air_id
+        self._model_supports_cfg: Dict[str, bool] = {}  # model_name -> supports CFGScale
+        self._model_supports_steps: Dict[str, bool] = {}  # model_name -> supports steps
+        self._load_model_config()
 
-    def _load_model_costs(self) -> None:
+    def _load_model_config(self) -> None:
         """
-        Load model costs from image_models_config.yaml.
+        Load model costs and AIR IDs from image_models_config.yaml.
 
-        Costs per image from model_registry entries.
+        Extracts:
+        - Costs per image from model_registry entries
+        - AIR IDs for Runware API calls
+        - CFGScale support per model
         """
         try:
             if self.IMAGE_MODELS_CONFIG_PATH.exists():
@@ -204,6 +211,17 @@ class ImageGenerationService:
 
                 model_registry = config.get("model_registry", {})
                 for model_id, model_data in model_registry.items():
+                    # Load AIR ID (required for Runware API)
+                    if "air_id" in model_data:
+                        self._model_air_ids[model_id] = model_data["air_id"]
+
+                    # Check if model supports CFGScale (only if specs.cfg_scale exists)
+                    specs = model_data.get("specs", {})
+                    self._model_supports_cfg[model_id] = "cfg_scale" in specs
+                    # Check if model supports steps (only if specs.steps exists)
+                    self._model_supports_steps[model_id] = "steps" in specs
+
+                    # Load cost data
                     cost_data = model_data.get("cost", {})
                     # Primary: per_image cost
                     if "per_image" in cost_data:
@@ -220,9 +238,9 @@ class ImageGenerationService:
                     elif "output_first_mp" in cost_data:
                         self._model_costs[model_id] = cost_data["output_first_mp"]
 
-                logger.debug(f"Loaded costs for {len(self._model_costs)} models")
+                logger.debug(f"Loaded config for {len(self._model_air_ids)} models (AIR IDs), {len(self._model_costs)} costs, CFG support tracked")
         except Exception as e:
-            logger.warning(f"Failed to load model costs from config: {e}")
+            logger.warning(f"Failed to load model config: {e}")
 
     def _get_model_cost(self, model: str) -> float:
         """
@@ -245,6 +263,83 @@ class ImageGenerationService:
                 return cost
 
         return self.DEFAULT_COST_PER_IMAGE
+
+    def _get_air_id(self, model: str) -> str:
+        """
+        Get AIR ID for a model name.
+
+        Converts model names like 'flux-1-kontext-pro' to AIR IDs like 'bfl:3@1'.
+        If the model is already an AIR ID format (contains ':'), returns as-is.
+
+        Args:
+            model: Model name or AIR ID
+
+        Returns:
+            AIR ID for Runware API
+        """
+        # If already in AIR format, return as-is
+        if ":" in model:
+            return model
+
+        # Direct lookup
+        if model in self._model_air_ids:
+            return self._model_air_ids[model]
+
+        # Try case-insensitive match
+        model_lower = model.lower()
+        for model_id, air_id in self._model_air_ids.items():
+            if model_id.lower() == model_lower:
+                return air_id
+
+        # Fallback to the model name itself (may fail at Runware)
+        logger.warning(f"No AIR ID found for model '{model}', using as-is")
+        return model
+
+    def _supports_cfg_scale(self, model_name: str) -> bool:
+        """
+        Check if a model supports CFGScale parameter.
+
+        Args:
+            model_name: Model name (not AIR ID)
+
+        Returns:
+            True if model supports CFGScale, False otherwise
+        """
+        # Direct lookup
+        if model_name in self._model_supports_cfg:
+            return self._model_supports_cfg[model_name]
+
+        # Try case-insensitive match
+        model_lower = model_name.lower()
+        for model_id, supports in self._model_supports_cfg.items():
+            if model_id.lower() == model_lower:
+                return supports
+
+        # Default to False for unknown models (safer)
+        return False
+
+    def _supports_steps(self, model_name: str) -> bool:
+        """
+        Check if a model supports steps parameter.
+
+        Args:
+            model_name: Model name (not AIR ID)
+
+        Returns:
+            True if model supports steps, False otherwise
+        """
+        # Direct lookup
+        if model_name in self._model_supports_steps:
+            return self._model_supports_steps[model_name]
+
+        # Try case-insensitive match
+        model_lower = model_name.lower()
+        for model_id, supports in self._model_supports_steps.items():
+            if model_id.lower() == model_lower:
+                return supports
+
+        # Default to False for unknown models (safer)
+        return False
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
@@ -288,7 +383,14 @@ class ImageGenerationService:
         start_time = time.time()
 
         # Determine model to use (all via Runware)
-        model = request.model or self._config.image_models.primary or "runware:101@1"
+        # Model comes from request or config - no hardcoded fallback
+        model_name = request.model or self._config.image_models.primary
+        if not model_name:
+            raise ImageGenerationError("No model specified and no default model configured")
+
+        # Convert model name to AIR ID for Runware API
+        model = self._get_air_id(model_name)
+        logger.debug(f"Model selection: {model_name} -> AIR ID: {model}")
 
         # Get dimensions
         width, height = self._get_dimensions(request)
@@ -298,7 +400,7 @@ class ImageGenerationService:
 
         for attempt in range(self.max_retries + 1):
             try:
-                result = await self._generate_runware(request, model, width, height)
+                result = await self._generate_runware(request, model, model_name, width, height)
                 result.duration_ms = int((time.time() - start_time) * 1000)
                 return result
 
@@ -317,21 +419,38 @@ class ImageGenerationService:
         self,
         request: ImageGenerationRequest,
         model: str,
+        model_name: str,
         width: int,
         height: int,
     ) -> ImageGenerationResult:
         """Generate images using Runware API."""
         client = await self._get_client()
 
+        # Generate unique taskUUID for this request (required by Runware API)
+        task_uuid = str(uuid.uuid4())
+
         payload = {
+            "taskType": "imageInference",  # Required by Runware API
+            "taskUUID": task_uuid,  # Required: UUID v4 for matching async responses
+            "outputType": "URL",  # Return image as URL
             "positivePrompt": request.prompt,
             "model": model,
             "width": width,
             "height": height,
             "numberResults": request.num_images,
-            "steps": request.steps,
-            "CFGScale": request.guidance_scale,
         }
+
+        # Only add steps if the model supports it (e.g., flux-2-flex)
+        # Models like flux-1-kontext-pro don't support steps
+        if self._supports_steps(model_name):
+            payload["steps"] = request.steps
+            logger.debug(f"Model {model_name} supports steps, added value: {request.steps}")
+
+        # Only add CFGScale if the model supports it (e.g., flux-2-flex)
+        # Models like flux-1-kontext-pro don't support CFGScale
+        if self._supports_cfg_scale(model_name):
+            payload["CFGScale"] = request.guidance_scale
+            logger.debug(f"Model {model_name} supports CFGScale, added value: {request.guidance_scale}")
 
         if request.negative_prompt:
             payload["negativePrompt"] = request.negative_prompt
@@ -340,7 +459,9 @@ class ImageGenerationService:
             payload["seed"] = request.seed
 
         if request.reference_image_url:
-            payload["inputImage"] = request.reference_image_url
+            # Runware uses seedImage for image-to-image (not inputImage)
+            # Can be URL, base64, data URI, or UUID of uploaded image
+            payload["seedImage"] = request.reference_image_url
             payload["strength"] = request.reference_strength
 
         # Apply provider-specific settings (Runware-specific params)
@@ -359,16 +480,20 @@ class ImageGenerationService:
                 payload[mapped_key] = value
 
         try:
+            logger.info(f"Runware API request: taskUUID={task_uuid}, model={model}, size={width}x{height}")
+
+            # Runware API requires the request payload to be an array of objects
             response = await client.post(
                 "https://api.runware.ai/v1/images/generations",
                 headers={
                     "Authorization": f"Bearer {self.runware_api_key}",
                     "Content-Type": "application/json",
                 },
-                json=payload,
+                json=[payload],  # Wrap in array as required by Runware API
             )
 
             if response.status_code != 200:
+                logger.error(f"Runware API error: status={response.status_code}, taskUUID={task_uuid}")
                 raise ProviderError(f"Runware API error ({response.status_code}): {response.text}")
 
             data = response.json()
@@ -378,15 +503,17 @@ class ImageGenerationService:
                 images.append(GeneratedImage(
                     url=img_data.get("imageURL"),
                     seed=img_data.get("seed"),
-                    metadata={"runware_id": img_data.get("taskUUID")},
+                    metadata={"runware_id": img_data.get("taskUUID"), "imageUUID": img_data.get("imageUUID")},
                 ))
+
+            logger.info(f"Runware API success: taskUUID={task_uuid}, images={len(images)}")
 
             return ImageGenerationResult(
                 images=images,
                 model_used=model,
                 provider="runware",
                 cost_usd=self._get_model_cost(model) * request.num_images,
-                metadata={"raw_response": data},
+                metadata={"raw_response": data, "task_uuid": task_uuid},
             )
 
         except httpx.TimeoutException:
@@ -407,7 +534,9 @@ class ImageGenerationService:
         Returns:
             Estimated cost in USD
         """
-        model = request.model or self._config.image_models.primary or "flux-1-kontext-pro"
+        model = request.model or self._config.image_models.primary
+        if not model:
+            return 0.04  # Default cost estimate if no model specified
         cost_per_image = self._get_model_cost(model)
         return cost_per_image * request.num_images
 

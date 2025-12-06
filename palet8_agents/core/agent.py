@@ -324,7 +324,7 @@ class BaseAgent(ABC):
             return ToolResult(
                 success=False,
                 data=None,
-                error=str(e),
+                error_detail=str(e),
                 error_code="TOOL_CALL_ERROR",
             )
 

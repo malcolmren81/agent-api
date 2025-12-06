@@ -82,8 +82,9 @@ class ImageModelConfig:
 
     Values loaded from config/image_models_config.yaml
     """
-    primary: str = "flux-1-kontext-pro"  # Default model
-    fallback: str = "ideogram-3"
+    # Models loaded from image_models_config.yaml - no hardcoded defaults
+    primary: Optional[str] = None
+    fallback: Optional[str] = None
     default_dimensions: str = "1024x1024"
     default_steps: int = 30
 
@@ -279,9 +280,33 @@ def load_config(config_path: Optional[str] = None) -> AgentConfig:
 
     # Parse image models
     image_data = data.get("image_models", {})
+    primary_model = image_data.get("primary")
+    fallback_model = image_data.get("fallback")
+
+    # Load models from image_models_config.yaml if not set in main config
+    if not primary_model or not fallback_model:
+        image_models_config_path = config_file.parent / "image_models_config.yaml"
+        if image_models_config_path.exists():
+            with open(image_models_config_path, "r") as f:
+                img_config = yaml.safe_load(f) or {}
+
+            # Get primary from scenario_selection (first priority in art_no_reference)
+            scenario_selection = img_config.get("scenario_selection", {})
+            art_no_ref = scenario_selection.get("art_no_reference", {})
+            priority_models = art_no_ref.get("priority_models", {})
+            if priority_models and not primary_model:
+                first_priority = min(priority_models.keys())
+                primary_model = priority_models[first_priority]
+
+            # Get fallback from second priority
+            if priority_models and not fallback_model:
+                priorities = sorted(priority_models.keys())
+                if len(priorities) > 1:
+                    fallback_model = priority_models[priorities[1]]
+
     image_models = ImageModelConfig(
-        primary=image_data.get("primary", ""),
-        fallback=image_data.get("fallback", ""),
+        primary=primary_model,
+        fallback=fallback_model,
         default_dimensions=image_data.get("default_dimensions", "1024x1024"),
         default_steps=image_data.get("default_steps", 30),
     )

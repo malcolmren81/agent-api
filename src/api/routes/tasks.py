@@ -190,7 +190,7 @@ async def list_tasks(
         )
 
     except Exception as e:
-        logger.error("Error fetching tasks", error=str(e), exc_info=True)
+        logger.error("Error fetching tasks", error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -244,7 +244,7 @@ async def get_task(task_id: str) -> TaskResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error fetching task", task_id=task_id, error=str(e), exc_info=True)
+        logger.error("Error fetching task", task_id=task_id, error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -318,7 +318,7 @@ async def create_task(
         return response
 
     except Exception as e:
-        logger.error("Error creating task", error=str(e), exc_info=True)
+        logger.error("Error creating task", error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -366,7 +366,7 @@ async def create_task(
 #         }
 #
 #     except Exception as e:
-#         logger.error("Error queuing task aggregation", error=str(e), exc_info=True)
+#         logger.error("Error queuing task aggregation", error_detail=str(e), exc_info=True)
 #         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -409,5 +409,5 @@ async def delete_task(task_id: str) -> dict:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error deleting task", task_id=task_id, error=str(e), exc_info=True)
+        logger.error("Error deleting task", task_id=task_id, error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

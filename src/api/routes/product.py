@@ -37,5 +37,5 @@ async def create_products(request: ProductRequest) -> ProductResponse:
         )
 
     except Exception as e:
-        logger.error("Product generation error", error=str(e), exc_info=True)
+        logger.error("Product generation error", error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

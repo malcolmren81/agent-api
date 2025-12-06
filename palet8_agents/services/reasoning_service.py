@@ -374,8 +374,32 @@ Provide your alignment assessment as JSON:"""
         """
         service = await self._get_text_service()
 
+        categories_text = "\n".join([f"- {cat}" for cat in categories])
+
+        system_prompt = f"""Classify the following text into exactly one of these categories:
+{categories_text}
+
+Respond with ONLY the category name, nothing else."""
+
         try:
-            return await service.classify_intent(text, categories, profile_name="safety")
+            result = await service.generate_text(
+                prompt=text,
+                system_prompt=system_prompt,
+                profile_name="safety",
+                temperature=0.0,  # Deterministic
+                max_tokens=50,
+            )
+
+            # Clean and validate response
+            response = result.content.strip().lower()
+            for category in categories:
+                if category.lower() in response or response in category.lower():
+                    return category
+
+            # Return first category as fallback
+            logger.warning(f"Could not match response '{response}' to categories, using first")
+            return categories[0]
+
         except TextLLMServiceError as e:
             raise ReasoningServiceError(f"Intent classification failed: {e}")
 

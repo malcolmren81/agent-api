@@ -52,6 +52,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             print(f"⚠️ Migration warning: {type(migration_error).__name__}: {str(migration_error)}")
             print("Continuing startup - columns may already exist")
 
+        # Initialize selector cache from Admin API
+        try:
+            from palet8_agents.services.selector_service import SelectorService
+            print("Initializing selector cache from Admin API...")
+            selector_service = SelectorService.get_instance()
+            await selector_service.initialize()
+            stats = selector_service.get_cache_stats()
+            print(f"✅ Selector cache initialized: {stats['selector_count']} selectors cached")
+        except Exception as selector_error:
+            print(f"⚠️ Selector cache warning: {type(selector_error).__name__}: {str(selector_error)}")
+            print("Continuing startup - selector cache may not be available")
+
     except Exception as e:
         print(f"⚠️ WARNING: Database connection failed in lifespan: {type(e).__name__}: {str(e)}")
         print("Application will start but database operations may fail")

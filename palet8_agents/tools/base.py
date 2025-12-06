@@ -264,7 +264,7 @@ class BaseTool(ABC):
             return ToolResult(
                 success=False,
                 data=None,
-                error=str(e),
+                error_detail=str(e),
                 error_code="EXECUTION_ERROR",
             )
 

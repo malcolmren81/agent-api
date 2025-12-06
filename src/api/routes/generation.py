@@ -38,5 +38,5 @@ async def generate_images(request: GenerationRequest) -> GenerationResponse:
         )
 
     except Exception as e:
-        logger.error("Generation error", error=str(e), exc_info=True)
+        logger.error("Generation error", error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

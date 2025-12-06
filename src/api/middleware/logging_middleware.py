@@ -90,7 +90,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 method=request.method,
                 path=request.url.path,
                 duration_ms=duration_ms,
-                error=str(e),
+                error_detail=str(e),
                 error_type=type(e).__name__,
             )
             raise

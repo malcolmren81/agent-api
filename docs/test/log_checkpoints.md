@@ -51,6 +51,9 @@ All logs automatically include correlation IDs when set:
 
 **File**: `/palet8_agents/agents/pali_agent.py`
 
+**Pali is always on as the communication layer between user and system.**
+
+### Session & Chat Logs
 | Event | Level | Fields | Description |
 |-------|-------|--------|-------------|
 | `pali.session.start` | INFO | `job_id`, `has_input`, `input_length`, `has_conversation` | New session started |
@@ -67,12 +70,28 @@ All logs automatically include correlation IDs when set:
 | `pali.requirements.analysis_error` | WARNING | `error`, `error_type` | Requirements analysis failed |
 | `pali.response.generation_error` | ERROR | `error`, `error_type` | Response generation failed |
 
+### Generation Orchestration Logs (NEW)
+| Event | Level | Fields | Description |
+|-------|-------|--------|-------------|
+| `pali.generate.start` | INFO | `job_id`, `has_requirements` | Pali receives generate request |
+| `pali.generate.delegating` | INFO | `job_id`, `next_agent` | Pali delegating to Planner |
+| `pali.clarification.from_planner` | INFO | `missing_fields` | Planner needs clarification |
+| `pali.result.presenting` | INFO | `job_id`, `images_count` | Presenting result to user |
+| `pali.user.confirmation_pending` | INFO | `job_id` | Waiting for user confirmation |
+| `pali.user.confirmed` | INFO | `job_id` | User confirmed result |
+| `pali.user.cancelled` | INFO | `job_id` | User cancelled |
+| `pali.session.complete` | INFO | `job_id` | Session ended after confirmation |
+| `pali.generate.error` | ERROR | `error`, `error_type` | Generation failed |
+
 ---
 
 ## Planner Agent V2 Logs
 
 **File**: `/palet8_agents/agents/planner_agent_v2.py`
 
+**Planner stays inline as the central orchestrator throughout the generation flow.**
+
+### Phase-Based Logs (Legacy)
 | Event | Level | Fields | Description |
 |-------|-------|--------|-------------|
 | `planner_v2.run.start` | INFO | `phase`, `has_feedback`, `requirements_count` | Planner execution started |
@@ -89,6 +108,36 @@ All logs automatically include correlation IDs when set:
 | `planner_v2.pipeline.selection_failed` | WARNING | `error`, `fallback_pipeline` | Pipeline selection failed |
 | `planner_v2.assembly_request.created` | INFO | `model_id`, `pipeline_type`, `prompt_length` | Assembly request built |
 | `planner_v2.fix_plan.start` | INFO | `has_feedback`, `issues_count` | Fix plan phase started |
+
+### Inline Orchestration Logs (UPDATED - Now Pure Orchestrator)
+| Event | Level | Fields | Description |
+|-------|-------|--------|-------------|
+| `planner_v2.orchestration.start` | INFO | `job_id`, `has_pali_callback` | Planner begins inline orchestration |
+| `planner_v2.pipeline.selected` | INFO | `pipeline_name`, `checkpoint_count` | Pipeline method selected from config |
+| `planner_v2.checkpoint.start` | INFO | `checkpoint_id`, `checkpoint_idx` | Checkpoint execution started |
+| `planner_v2.checkpoint.failed` | WARNING | `checkpoint_id`, `on_fail`, `retry_count` | Checkpoint failed |
+| `planner_v2.context.check` | INFO | `score`, `is_sufficient` | Context completeness check |
+| `planner_v2.clarification.requesting` | INFO | `missing_fields` | Asking Pali to get clarification |
+| `planner_v2.progress` | INFO | `stage`, `progress` | Progress update within orchestration |
+| `planner_v2.delegate.genplan` | INFO | `job_id` | **Delegating to GenPlanAgent (NEW)** |
+| `planner_v2.genplan.failed` | ERROR | `error` | GenPlan delegation failed |
+| `planner_v2.genplan.error` | ERROR | `error` | GenPlan execution error |
+| `planner_v2.delegate.react_prompt` | INFO | `phase`, `has_generation_plan` | Delegating to ReactPromptAgent |
+| `planner_v2.react_prompt.failed` | ERROR | `error` | ReactPrompt delegation failed |
+| `planner_v2.react_prompt.error` | ERROR | `error` | ReactPrompt execution error |
+| `planner_v2.delegate.evaluator` | INFO | `phase`, `has_image` | Delegating to EvaluatorAgentV2 |
+| `planner_v2.evaluator.error` | ERROR | `error` | Evaluator execution error |
+| `planner_v2.generation.start` | INFO | `job_id`, `model_id`, `pipeline_type` | Starting image generation |
+| `planner_v2.generation.complete` | INFO | `images_count` | Image generation complete |
+| `planner_v2.generation.failed` | ERROR | `error` | Image generation failed |
+| `planner_v2.generation.error` | ERROR | `error` | Generation execution error |
+| `planner_v2.result.sending_to_pali` | INFO | `job_id` | Sending result to Pali |
+| `planner_v2.orchestration.retry` | WARNING | `reason`, `retry_count` | Retrying due to evaluation failure |
+| `planner_v2.accepting_with_warning` | WARNING | `checkpoint_id` | Accepting with warning |
+| `planner_v2.orchestration.complete` | INFO | `job_id`, `images_count`, `retry_count` | Orchestration finished successfully |
+| `planner_v2.orchestration.max_retries` | ERROR | `retry_count` | Max retries exceeded |
+| `planner_v2.orchestration.error` | ERROR | `error`, `error_type` | Orchestration failed |
+| `planner_v2.legacy_run` | WARNING | `phase`, `message` | Legacy run() method called |
 
 ---
 
@@ -115,13 +164,56 @@ All logs automatically include correlation IDs when set:
 
 ---
 
+## GenPlan Agent Logs (NEW)
+
+**File**: `/palet8_agents/agents/genplan_agent.py`
+
+**GenPlan is the generation planning agent that determines complexity, genflow, model selection, and parameters.**
+
+| Event | Level | Fields | Description |
+|-------|-------|--------|-------------|
+| `genplan.run.start` | INFO | `job_id`, `has_requirements` | GenPlan ReAct loop started |
+| `genplan.step.action` | DEBUG | `step`, `action` | Action selected in ReAct loop |
+| `genplan.complexity.start` | INFO | `job_id` | Complexity analysis started |
+| `genplan.complexity.determined` | INFO | `job_id`, `complexity`, `rationale`, `source`, `triggers_found` | Complexity level determined |
+| `genplan.user_info.start` | INFO | `job_id` | User info parsing started |
+| `genplan.user_info.parsed` | INFO | `job_id`, `subject`, `style`, `product_type`, `has_reference`, `has_text_content`, `intents` | User requirements parsed |
+| `genplan.genflow.start` | INFO | `job_id` | Genflow determination started |
+| `genplan.genflow.selected` | INFO | `job_id`, `flow_type`, `flow_name`, `rationale`, `triggered_by` | Genflow (single/dual) selected |
+| `genplan.model.start` | INFO | `job_id` | Model selection started |
+| `genplan.model.selected` | INFO | `job_id`, `model_id`, `source`, `scenario`, `rationale`, `alternatives`, `pipeline` | Model selected |
+| `genplan.parameters.start` | INFO | `job_id` | Parameter extraction started |
+| `genplan.parameters.extracted` | INFO | `job_id`, `width`, `height`, `steps`, `guidance_scale`, `has_provider_params` | Generation parameters extracted |
+| `genplan.validate.start` | INFO | `job_id` | Plan validation started |
+| `genplan.validate.complete` | INFO | `job_id`, `is_valid`, `error_count`, `errors` | Plan validation completed |
+| `genplan.run.complete` | INFO | `job_id`, `complexity`, `genflow_type`, `model_id`, `steps`, `is_valid` | GenPlan ReAct loop completed |
+| `genplan.run.error` | ERROR | `error`, `error_type` | GenPlan execution failed |
+| `genplan.clarification.requested` | INFO | `job_id`, `field` | User clarification requested |
+
+---
+
+## Genflow Service Logs
+
+**File**: `/palet8_agents/services/genflow_service.py`
+
+| Event | Level | Fields | Description |
+|-------|-------|--------|-------------|
+| `genflow_service.config.loaded` | INFO | `config_path` | Genflow config loaded |
+| `genflow_service.config.load_failed` | WARNING | `error`, `error_type` | Genflow config load failed |
+| `genflow_service.decision.dual` | INFO | `pipeline_name`, `triggers`, `rationale` | Dual pipeline selected |
+
+---
+
 ## React Prompt Agent Logs
 
 **File**: `/palet8_agents/agents/react_prompt_agent.py`
 
+**ReactPrompt now receives GenerationPlan from GenPlan agent via context.metadata["generation_plan"].**
+
 | Event | Level | Fields | Description |
 |-------|-------|--------|-------------|
-| `react_prompt.run.start` | INFO | `job_id`, `phase`, `has_previous_plan` | ReAct loop started |
+| `react_prompt.run.start` | INFO | `job_id`, `phase`, `has_previous_plan`, `has_generation_plan` | ReAct loop started |
+| `react_prompt.init_state.from_generation_plan` | DEBUG | `mode`, `provider_params_keys` | State initialized from GenerationPlan |
 | `react_prompt.run.complete` | INFO | `job_id`, `quality_score`, `quality_acceptable`, `steps`, `revision_count`, `mode` | ReAct loop completed |
 | `react_prompt.run.error` | ERROR | `error`, `error_type` | ReAct loop failed |
 | `react_prompt.step.action` | DEBUG | `step`, `action` | Action selected in loop |
@@ -211,30 +303,92 @@ The `assembly.progress` event tracks pipeline execution with `progress_pct` valu
 
 ## Flow Detection
 
-### Forward Flow (Happy Path)
+### Forward Flow (Happy Path) - UPDATED Architecture
+
+**Pali is always on as communication layer. Planner is pure orchestrator that delegates to GenPlan and ReactPrompt.**
 
 ```
 api.request.start
-  └─> pali.session.start
-      └─> pali.input.validated
-          └─> pali.requirements.analyzed
-              └─> pali.delegation.triggered (next_agent=planner)
-                  └─> planner_v2.run.start (phase=initial)
-                      └─> planner_v2.context.evaluated
-                          └─> planner_v2.safety.classified
-                              └─> planner_v2.complexity.classified
-                                  └─> planner_v2.model.selected
-                                      └─> planner_v2.pipeline.selected
-                                          └─> planner_v2.assembly_request.created
-                                              └─> evaluator_v2.prompt_eval.start
-                                                  └─> evaluator_v2.prompt_eval.passed
-                                                      └─> assembly.execution.start
-                                                          └─> assembly.single.generation.sending
-                                                              └─> assembly.single.generation.received
-                                                                  └─> assembly.execution.complete
-                                                                      └─> evaluator_v2.result_eval.start
-                                                                          └─> evaluator_v2.result_eval.approved
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ PALI (always on - communication layer)                              │
+│   pali.generate.start                                               │
+│   pali.generate.delegating                                          │
+│   │                                                                 │
+│   ▼                                                                 │
+│ ┌─────────────────────────────────────────────────────────────────┐ │
+│ │ PLANNER (pure orchestrator - follows pipeline_methods.yaml)     │ │
+│ │   planner_v2.orchestration.start                                │ │
+│ │   planner_v2.pipeline.selected                                  │ │
+│ │   planner_v2.checkpoint.start (context_check)                   │ │
+│ │   planner_v2.checkpoint.start (safety_check)                    │ │
+│ │   │                                                             │ │
+│ │   ├─→ planner_v2.delegate.genplan  (CHECKPOINT 1: NEW)          │ │
+│ │   │     └─→ genplan.run.start                                   │ │
+│ │   │         └─→ genplan.complexity.determined                   │ │
+│ │   │             └─→ genplan.user_info.parsed                    │ │
+│ │   │                 └─→ genplan.genflow.selected                │ │
+│ │   │                     └─→ genplan.model.selected              │ │
+│ │   │                         └─→ genplan.parameters.extracted    │ │
+│ │   │                             └─→ genplan.validate.complete   │ │
+│ │   │                                 └─→ genplan.run.complete    │ │
+│ │   │                                                             │ │
+│ │   ├─→ planner_v2.delegate.react_prompt  (CHECKPOINT 2)          │ │
+│ │   │     └─→ react_prompt.run.start (receives GenerationPlan)    │ │
+│ │   │         └─→ react_prompt.context.complete                   │ │
+│ │   │             └─→ react_prompt.dimensions.complete            │ │
+│ │   │                 └─→ react_prompt.compose.complete           │ │
+│ │   │                     └─→ react_prompt.quality.scored         │ │
+│ │   │                         └─→ react_prompt.run.complete       │ │
+│ │   │                                                             │ │
+│ │   ├─→ planner_v2.delegate.evaluator (phase=create_plan)         │ │
+│ │   │     └─→ evaluator_v2.prompt_eval.start                      │ │
+│ │   │         └─→ evaluator_v2.prompt_eval.passed                 │ │
+│ │   │                                                             │ │
+│ │   ├─→ planner_v2.generation.start  (CHECKPOINT 4)               │ │
+│ │   │     └─→ assembly.execution.start                            │ │
+│ │   │         └─→ assembly.progress (0% → 100%)                   │ │
+│ │   │             └─→ planner_v2.generation.complete              │ │
+│ │   │                                                             │ │
+│ │   ├─→ planner_v2.delegate.evaluator (phase=execute)             │ │
+│ │   │     └─→ evaluator_v2.result_eval.start                      │ │
+│ │   │         └─→ evaluator_v2.result_eval.approved               │ │
+│ │   │                                                             │ │
+│ │   planner_v2.result.sending_to_pali                             │ │
+│ │   planner_v2.orchestration.complete                             │ │
+│ └─────────────────────────────────────────────────────────────────┘ │
+│   │                                                                 │
+│   pali.result.presenting                                            │
+│   pali.user.confirmation_pending                                    │
+│   pali.user.confirmed                                               │
+│   pali.session.complete                                             │
+└─────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
 api.request.complete
+```
+
+### Clarification Flow
+
+```
+planner_v2.orchestration.start
+  └─> planner_v2.context.check (insufficient)
+      └─> planner_v2.clarification.requesting
+          └─> pali.clarification.from_planner
+              └─> [User provides more info]
+                  └─> pali.generate.start (retry)
+                      └─> planner_v2.orchestration.start
+```
+
+### Retry Flow
+
+```
+planner_v2.delegate.evaluator (phase=execute)
+  └─> evaluator_v2.result_eval.rejected
+      └─> planner_v2.orchestration.retry (reason=post_eval_rejected)
+          └─> planner_v2.delegate.react_prompt (retry_count=1)
+              └─> [Loop back through generation]
 ```
 
 ### Reverse Flow Indicators
@@ -268,7 +422,14 @@ api.request.complete
 ```
 resource.type="cloud_run_revision"
 resource.labels.service_name="palet8-agents"
-jsonPayload.event=~"pali\.|planner_v2\.|evaluator_v2\.|react_prompt\.|assembly\.|safety\."
+jsonPayload.event=~"pali\.|planner_v2\.|genplan\.|evaluator_v2\.|react_prompt\.|assembly\.|safety\."
+```
+
+**GenPlan events only:**
+```
+resource.type="cloud_run_revision"
+resource.labels.service_name="palet8-agents"
+jsonPayload.event=~"genplan\."
 ```
 
 **By job_id:**
@@ -344,7 +505,11 @@ jsonPayload.job_id="YOUR_JOB_ID"
 | API Middleware | `/src/api/middleware/logging_middleware.py` |
 | Pali Agent | `/palet8_agents/agents/pali_agent.py` |
 | Planner Agent V2 | `/palet8_agents/agents/planner_agent_v2.py` |
+| **GenPlan Agent** (NEW) | `/palet8_agents/agents/genplan_agent.py` |
 | Evaluator Agent V2 | `/palet8_agents/agents/evaluator_agent_v2.py` |
 | React Prompt Agent | `/palet8_agents/agents/react_prompt_agent.py` |
 | Assembly Service | `/palet8_agents/services/assembly_service.py` |
+| **Genflow Service** (NEW) | `/palet8_agents/services/genflow_service.py` |
 | Safety Agent | `/palet8_agents/agents/safety_agent.py` |
+| Pipeline Methods Config | `/config/pipeline_methods.yaml` |
+| GenPlan Data Models | `/palet8_agents/models/genplan.py` |

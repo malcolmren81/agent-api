@@ -7,6 +7,7 @@ This layer sits between the API/orchestrator and domain agents, handling:
 - Long-term memory storage (RAG)
 - Text and image generation
 - Embeddings and similarity search
+- Genflow (generation pipeline) selection
 - Cross-cutting concerns that span multiple agents
 """
 from palet8_agents.services.requirements_analysis_service import (
@@ -45,6 +46,10 @@ from palet8_agents.services.model_selection_service import (
     NoCompatibleModelError,
     ModelSelectionConfig,
 )
+from palet8_agents.services.genflow_service import (
+    GenflowService,
+    GenflowServiceConfig,
+)
 from palet8_agents.services.prompt_evaluation_service import (
     PromptEvaluationService,
     PromptEvaluationError,
@@ -59,6 +64,11 @@ from palet8_agents.services.assembly_service import (
     AssemblyService,
     AssemblyError,
     PipelineError,
+)
+from palet8_agents.services.selector_service import (
+    SelectorService,
+    SelectorServiceError,
+    CacheRefreshError,
 )
 
 __all__ = [
@@ -92,6 +102,9 @@ __all__ = [
     "ModelSelectionError",
     "NoCompatibleModelError",
     "ModelSelectionConfig",
+    # Genflow (Pipeline Selection)
+    "GenflowService",
+    "GenflowServiceConfig",
     # Prompt Evaluation
     "PromptEvaluationService",
     "PromptEvaluationError",
@@ -104,4 +117,8 @@ __all__ = [
     "AssemblyService",
     "AssemblyError",
     "PipelineError",
+    # Selector Cache
+    "SelectorService",
+    "SelectorServiceError",
+    "CacheRefreshError",
 ]

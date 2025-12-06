@@ -26,46 +26,62 @@ Multi-agent orchestration service for AI-powered design generation. Transforms u
 
 ## Architecture
 
+### Inline Orchestration Pattern
+
+The system uses an **inline orchestration** pattern where:
+- **Pali** is always on as the **communication layer** (user ↔ system)
+- **Planner** stays inline as the **central orchestrator** (doesn't exit until complete)
+- **Specialized agents** (ReactPrompt, Evaluator, Safety) are invoked only at checkpoints
+
 ```
-User Request
-    |
-+---------------------------------------------------------------+
-|  PALI AGENT - Conversational requirement gathering             |
-|  - Multi-turn chat with users                                  |
-|  - UI selector integration (template, aesthetic, character)    |
-|  - Requirements validation & completeness tracking             |
-+---------------------------------------------------------------+
-    |
-+---------------------------------------------------------------+
-|  PLANNER AGENT - Central decision making                       |
-|  - Context evaluation & RAG (user history, art library)        |
-|  - Prompt mode selection (RELAX/STANDARD/COMPLEX)              |
-|  - Model selection based on capability/cost analysis           |
-|  - Safety classification                                       |
-+---------------------------------------------------------------+
-    |
-+---------------------------------------------------------------+
-|  ASSEMBLY SERVICE - Image Generation                           |
-|  - Single/Dual pipeline execution                              |
-|  - Primary: Runware API (Flux, SDXL models)                    |
-|  - Cost tracking per generation                                |
-+---------------------------------------------------------------+
-    |
-+---------------------------------------------------------------+
-|  EVALUATOR AGENT - Quality gates                               |
-|  - Prompt quality assessment (before generation)               |
-|  - Result quality scoring (after generation)                   |
-|  - Approval/rejection decisions                                |
-+---------------------------------------------------------------+
-    |
-+---------------------------------------------------------------+
-|  SAFETY AGENT - Continuous monitoring (non-blocking)           |
-|  - NSFW, violence, hate speech detection                       |
-|  - IP/trademark violation checks                               |
-|  - Risk categorization & recommendations                       |
-+---------------------------------------------------------------+
-    |
-Approved Image + Metadata
+User ←→ /chat/generate ←→ PALI (always on, communication layer)
+                              │
+                              ▼
+                         PLANNER (inline orchestrator)
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+        ReactPrompt    AssemblyService   Evaluator
+        (checkpoint)    (checkpoint)    (checkpoint)
+```
+
+### Agent Responsibilities
+
+```
+╔═══════════════════════════════════════════════════════════════════╗
+║  PALI AGENT - Always-On Communication Layer                       ║
+║  - Multi-turn chat with users                                     ║
+║  - UI selector integration (template, aesthetic, character)       ║
+║  - Requirements validation & completeness tracking                ║
+║  - Delegates generation to Planner                                ║
+║  - Presents results and waits for user confirmation               ║
+╚═══════════════════════════════════════════════════════════════════╝
+                              │
+╔═══════════════════════════════════════════════════════════════════╗
+║  PLANNER AGENT - Inline Orchestrator                              ║
+║  (Stays active throughout generation until user confirms)         ║
+║  - Context evaluation & sufficiency check                         ║
+║  - Safety classification                                          ║
+║  - Complexity classification (RELAX/STANDARD/COMPLEX)             ║
+║  - Delegates prompt building to ReactPrompt (checkpoint)          ║
+║  - Model/pipeline selection                                       ║
+║  - Delegates pre-gen evaluation to Evaluator (checkpoint)         ║
+║  - Executes generation via Assembly Service (checkpoint)          ║
+║  - Delegates post-gen evaluation to Evaluator (checkpoint)        ║
+║  - Handles retry loops on rejection (max 3 retries)               ║
+╚═══════════════════════════════════════════════════════════════════╝
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+╔═══════════════════╗ ╔═══════════════════╗ ╔═══════════════════╗
+║ REACT PROMPT      ║ ║ ASSEMBLY SERVICE  ║ ║ EVALUATOR AGENT   ║
+║ (checkpoint)      ║ ║ (checkpoint)      ║ ║ (checkpoint)      ║
+║ - Context build   ║ ║ - Single/Dual     ║ ║ - Prompt quality  ║
+║ - Dimension       ║ ║   pipeline        ║ ║   (pre-gen)       ║
+║   selection       ║ ║ - Runware API     ║ ║ - Result quality  ║
+║ - Prompt compose  ║ ║ - Progress stream ║ ║   (post-gen)      ║
+║ - Quality scoring ║ ║ - Cost tracking   ║ ║ - Pass/Fix/Reject ║
+╚═══════════════════╝ ╚═══════════════════╝ ╚═══════════════════╝
 ```
 
 ## API Endpoints
@@ -99,9 +115,16 @@ Approved Image + Metadata
 agents-api/
 +-- palet8_agents/              # Core agent system
 |   +-- agents/                 # Agent implementations
-|   |   +-- pali_agent.py       # Requirement gathering
-|   |   +-- planner_agent.py    # Decision making
-|   |   +-- evaluator_agent.py  # Quality gates
+|   |   +-- pali_agent.py       # Always-on communication layer
+|   |   |                       #   - handle_generate_request()
+|   |   |                       #   - confirm_and_complete()
+|   |   +-- planner_agent_v2.py # Inline orchestrator
+|   |   |                       #   - orchestrate_generation()
+|   |   |                       #   - _delegate_to_react_prompt()
+|   |   |                       #   - _delegate_to_evaluator()
+|   |   |                       #   - _execute_generation()
+|   |   +-- react_prompt_agent.py # Prompt building (checkpoint)
+|   |   +-- evaluator_agent_v2.py # Quality gates (checkpoint)
 |   |   +-- safety_agent.py     # Safety monitoring
 |   +-- core/                   # Framework (BaseAgent, Context, Message)
 |   +-- models/                 # Data models (shared across agents)

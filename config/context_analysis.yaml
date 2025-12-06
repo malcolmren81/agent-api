@@ -16,6 +16,7 @@ version: "1.0"
 # =============================================================================
 fields:
   required:
+    - complexity     # Generation mode (Relax/Standard/Complex) - ask first
     - subject        # Main subject/concept - absolutely required
 
   important:
@@ -36,7 +37,8 @@ fields:
 # Weights for calculating context completeness score (0.0 to 1.0)
 # =============================================================================
 completeness_weights:
-  subject: 0.40       # Most critical - design can't proceed without it
+  complexity: 0.10    # Generation mode - determines pipeline
+  subject: 0.35       # Most critical - design can't proceed without it
   style: 0.15         # Important for visual direction
   aesthetic: 0.15     # Important for overall feel
   colors: 0.10        # Helps constrain output
@@ -68,6 +70,7 @@ rag:
 # Template questions for missing fields
 # =============================================================================
 clarifying_questions:
+  complexity: "How much detail would you like? Choose a generation mode."
   subject: "What would you like the image to show? Please describe the main subject."
   style: "What style are you looking for? (e.g., realistic, cartoon, minimalist)"
   aesthetic: "What aesthetic or visual style do you prefer?"

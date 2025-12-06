@@ -64,6 +64,14 @@ from .planning import (
     PromptPlan,
 )
 
+# GenPlan (generation planning models)
+from .genplan import (
+    UserParseResult,
+    GenflowConfig,
+    GenerationPlan,
+    GenPlanState,
+)
+
 __all__ = [
     # Enums
     "PlannerPhase",
@@ -100,4 +108,9 @@ __all__ = [
     "PlanningTask",
     "ContextSummary",
     "PromptPlan",
+    # GenPlan
+    "UserParseResult",
+    "GenflowConfig",
+    "GenerationPlan",
+    "GenPlanState",
 ]

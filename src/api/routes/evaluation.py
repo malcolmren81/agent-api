@@ -44,5 +44,5 @@ async def evaluate_image(request: EvaluationRequest) -> EvaluationResponse:
         )
 
     except Exception as e:
-        logger.error("Evaluation error", error=str(e), exc_info=True)
+        logger.error("Evaluation error", error_detail=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

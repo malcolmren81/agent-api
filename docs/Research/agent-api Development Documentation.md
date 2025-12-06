@@ -36,10 +36,11 @@ These are handled by other services (see System Context).
 `agent-api` is responsible for:
 
 - Exposing **chat** and **job** APIs for design generation.
-- Running a **multi-agent orchestration**:
-  - **Pali Agent** (user-facing orchestrator),
-  - **Planner Agent** (planning, RAG, model selection, prompt building),
-  - **Evaluator Agent** (quality control),
+- Running a **multi-agent orchestration** with **inline orchestration pattern**:
+  - **Pali Agent** (always-on communication layer, user ↔ system),
+  - **Planner Agent V2** (inline orchestrator - stays active until user confirms),
+  - **React Prompt Agent** (prompt building - invoked at checkpoints),
+  - **Evaluator Agent V2** (quality control - invoked at checkpoints),
   - **Safety Agent** (policy / IP / NSFW gating).
 - Integrating with clearly separated **model-facing services**:
   - **Text LLM Service** – generic text generation,
@@ -382,29 +383,85 @@ Dedicated service for all **image model** calls.
 
 ### 5.2 Agents (`palet8_agents/agents/`)
 
+The system uses an **inline orchestration pattern** where:
+- **Pali** is always on as the **communication layer** (user ↔ system)
+- **Planner** stays inline as the **central orchestrator** (doesn't exit until complete)
+- **Specialized agents** (ReactPrompt, Evaluator) are invoked only at checkpoints
+
+```
+User ←→ /chat/generate ←→ PALI (always on)
+                              │
+                              ▼
+                         PLANNER (inline orchestrator)
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+        ReactPrompt    AssemblyService   Evaluator
+        (checkpoint)    (checkpoint)    (checkpoint)
+```
+
 #### Pali Agent (`pali_agent.py`)
 
-- Role: user-facing orchestrator.
+- Role: **always-on communication layer** between user and system.
+- Key methods:
+  - `handle_generate_request()` - Async generator that yields events to frontend while delegating to Planner
+  - `confirm_and_complete()` - Handle user confirmation/completion
 - Uses:
   - **Text LLM Service** for conversational responses and clarifying questions,
   - **Reasoning Service** (optional) for meta decisions.
 - Has its own model profile:
   - e.g., `pali_primary_model`, `pali_fallback_model` (names / IDs TBD).
 
-#### Planner Agent (`planner_agent.py`)
+#### Planner Agent V2 (`planner_agent_v2.py`)
 
-- Role: planning, RAG, prompt creation, model selection.
+- Role: **inline orchestrator** - stays active throughout generation until user confirms.
+- Key methods:
+  - `orchestrate_generation()` - Main inline orchestration loop with retry logic
+  - `_delegate_to_react_prompt()` - Checkpoint delegation to prompt building
+  - `_delegate_to_evaluator()` - Checkpoint delegation for pre/post-gen evaluation
+  - `_execute_generation()` - Execute generation via Assembly Service
+  - `_emit_progress()` - Send progress updates via Pali callback
+- Orchestration flow:
+  1. Context check (sufficient? → ask Pali for clarification)
+  2. Safety check (safe? → block if not)
+  3. Complexity classification (RELAX/STANDARD/COMPLEX)
+  4. Delegate to ReactPromptAgent (checkpoint)
+  5. Build AssemblyRequest
+  6. Delegate to Evaluator for pre-gen check (checkpoint)
+  7. Execute generation via AssemblyService (checkpoint)
+  8. Delegate to Evaluator for post-gen check (checkpoint)
+  9. Handle retry loops on rejection (max 3 retries)
+  10. Return result to Pali for user presentation
 - Uses:
   - Context Tool → Context Service,
   - Text LLM Service + Reasoning Service,
   - Model info configuration,
-  - Safety Agent for pre-generation checks.
-- Has its own model profile for planning and prompt-writing:
+  - Safety tools for pre-generation checks.
+- Has its own model profile for planning:
   - `planner_primary_model`, `planner_fallback_model` (TBD).
 
-#### Evaluator Agent (`evaluator_agent.py`)
+#### React Prompt Agent (`react_prompt_agent.py`)
 
-- Role: quality review.
+- Role: **prompt building** - invoked at checkpoints by Planner.
+- Key responsibilities:
+  - Context building (art refs, history, web search if needed)
+  - Dimension selection (subject, aesthetic, style)
+  - Prompt composition (final prompt and negative prompt)
+  - Quality scoring
+- Uses:
+  - Context Tool for RAG,
+  - Text LLM Service for prompt generation.
+
+#### Evaluator Agent V2 (`evaluator_agent_v2.py`)
+
+- Role: **quality gates** - invoked at checkpoints by Planner.
+- Two phases:
+  - **Pre-generation** (phase="create_plan"): Evaluate prompt quality before generation
+  - **Post-generation** (phase="execute"): Evaluate result quality after generation
+- Decision types:
+  - `PASS` / `APPROVE` - Continue to next step
+  - `FIX_REQUIRED` / `REJECT` - Retry with feedback (if retries remaining)
+  - `POLICY_FAIL` - Block for policy violation
 - Uses:
   - Reasoning Service for structured evaluations,
   - Text LLM Service for natural language summaries.
