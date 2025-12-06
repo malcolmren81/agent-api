@@ -282,8 +282,22 @@ class PaliAgent(BaseAgent):
                     content=user_input,
                 ))
 
-            # Check if requirements are complete
-            requirements_status = await self.analyze_requirements(context, conversation)
+            # OPTIMIZATION: Check if context already has complete requirements
+            # This avoids redundant LLM analysis during auto-resume flows
+            # when requirements were already gathered in a previous turn
+            if context.requirements and context.requirements.get("subject"):
+                logger.info(
+                    "pali.requirements.already_complete",
+                    subject=context.requirements.get("subject"),
+                    has_complexity=bool(context.requirements.get("complexity")),
+                    has_style=bool(context.requirements.get("style")),
+                    skipping_analysis=True,
+                )
+                # Build RequirementsStatus from existing context
+                requirements_status = RequirementsStatus.from_dict(context.requirements)
+            else:
+                # Analyze requirements from conversation
+                requirements_status = await self.analyze_requirements(context, conversation)
 
             logger.info(
                 "pali.requirements.analyzed",
@@ -618,8 +632,18 @@ Example: "What kind of mood do you want your design to have?"
             # Emit analyzing status
             await emit_status("analyzing", 0.3)
 
-            # Analyze requirements
-            requirements_status = await self.analyze_requirements(context, conversation)
+            # OPTIMIZATION: Check if context already has complete requirements
+            # This avoids redundant LLM analysis during auto-resume flows
+            if context.requirements and context.requirements.get("subject"):
+                logger.info(
+                    "pali.chat_turn.requirements_already_complete",
+                    subject=context.requirements.get("subject"),
+                    skipping_analysis=True,
+                )
+                requirements_status = RequirementsStatus.from_dict(context.requirements)
+            else:
+                # Analyze requirements from conversation
+                requirements_status = await self.analyze_requirements(context, conversation)
 
             # Check if complete
             if requirements_status.is_complete:
@@ -826,6 +850,15 @@ and update the requirements accordingly. Be concise and focused on the changes.
                         selector_id=selector_id,
                         missing_fields=missing_fields,
                     )
+
+                    # Send status update to signal clarification needed (enables input on frontend)
+                    yield {
+                        "type": "status",
+                        "stage": "clarification",
+                        "progress": 0.0,
+                        "message": "Need more details...",
+                        "requires_input": True,
+                    }
 
                     yield {
                         "type": "message",

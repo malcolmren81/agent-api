@@ -717,16 +717,33 @@ async def send_message(request: SendMessageRequest):
                 conversation_id=request.conversation_id,
             )
 
-            # Add generator context to requirements if provided
+            # CRITICAL: Load existing job requirements first
+            # This ensures previously extracted requirements (subject, style, etc.) are preserved
+            # Otherwise, auto-resume after clarification won't work
+            if db_conversation.job and db_conversation.job.requirements:
+                existing_reqs = db_conversation.job.requirements
+                if isinstance(existing_reqs, str):
+                    existing_reqs = json.loads(existing_reqs)
+                agent_context.requirements = dict(existing_reqs)
+                logger.info(
+                    "chat.existing_requirements.loaded",
+                    subject=existing_reqs.get("subject"),
+                    is_complete=existing_reqs.get("is_complete"),
+                )
+
+            # Add generator context to requirements if provided (merge, not replace)
             if request.context:
-                agent_context.requirements = {
+                if agent_context.requirements is None:
+                    agent_context.requirements = {}
+                agent_context.requirements.update({
                     "template_id": request.context.template_id,
                     "aesthetic_id": request.context.aesthetic_id,
                     "dimensions": request.context.dimensions,
                     "creativity": request.context.creativity,
-                }
+                })
 
             # Add selector response to requirements if parsed
+            # Note: Selector is already persisted to DB at line 688
             if selector_data:
                 if agent_context.requirements is None:
                     agent_context.requirements = {}
@@ -767,11 +784,20 @@ async def send_message(request: SendMessageRequest):
 
             # Extract response data
             response_message = result.data.get("message", "")
-            requirements_status = result.data.get("requirements_status", {})
             action = result.data.get("action")
 
+            # CRITICAL FIX: Pali returns different keys based on action:
+            # - "requirements_status" when action="request_more_info"
+            # - "requirements" when action="delegate_to_planner"
+            # Check both keys to get the correct requirements data
+            requirements_status = result.data.get("requirements_status") or result.data.get("requirements", {})
+
             # Check if requirements are complete
-            is_complete = requirements_status.get("is_complete", False)
+            # When action is "delegate_to_planner", requirements are complete by definition
+            is_complete = (
+                action == "delegate_to_planner" or
+                requirements_status.get("is_complete", False)
+            )
 
             # Send requirements status
             yield create_requirements_event(requirements_status, is_complete)
@@ -796,13 +822,41 @@ async def send_message(request: SendMessageRequest):
                 from prisma import Json
                 update_data = {"status": "PLANNING"}
                 if requirements_status:
-                    update_data["requirements"] = Json(requirements_status)
+                    # CRITICAL: Merge requirements_status with existing job requirements
+                    # This preserves selector responses (complexity, character, etc.)
+                    # that were saved earlier but aren't in Pali's response
+                    job = await prisma.job.find_unique(where={"id": db_conversation.jobId})
+                    existing_reqs = {}
+                    if job and job.requirements:
+                        existing_reqs = job.requirements if isinstance(job.requirements, dict) else json.loads(job.requirements)
+
+                    # Merge: existing first, then requirements_status (so Pali's response takes precedence for design fields)
+                    merged_requirements = {**existing_reqs, **requirements_status}
+                    update_data["requirements"] = Json(merged_requirements)
+                    logger.info(
+                        "chat.requirements.saving",
+                        job_id=db_conversation.jobId,
+                        has_subject=bool(merged_requirements.get("subject")),
+                        has_complexity=bool(merged_requirements.get("complexity")),
+                        subject=merged_requirements.get("subject", "")[:50] if merged_requirements.get("subject") else None,
+                    )
                 await prisma.job.update(
                     where={"id": db_conversation.jobId},
                     data=update_data
                 )
 
             # Auto-resume if was awaiting clarification and user provided answer
+            logger.info(
+                "chat.auto_resume.check",
+                job_status=db_conversation.job.status if db_conversation.job else None,
+                is_complete=is_complete,
+                action=action,
+                will_resume=bool(
+                    db_conversation.job and
+                    db_conversation.job.status == "AWAITING_CLARIFICATION" and
+                    (is_complete or action == "delegate_to_planner")
+                ),
+            )
             if db_conversation.job and db_conversation.job.status == "AWAITING_CLARIFICATION":
                 if is_complete or action == "delegate_to_planner":
                     logger.info(

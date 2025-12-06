@@ -852,6 +852,31 @@ class PlannerAgentV2(BaseAgent):
                 )
 
             # Route clarification through Pali
+            questions = result.get("data", {}).get("questions", [])
+            missing_fields = result.get("data", {}).get("missing_fields", [])
+            clarification_request = result.get("data", {}).get("clarification_request")
+
+            # Fallback: extract field from clarification_request if missing_fields is empty
+            if not missing_fields and clarification_request:
+                field = clarification_request.get("field")
+                if field:
+                    missing_fields = [field]
+                    logger.info(
+                        "planner_v2.clarification.missing_fields_fallback",
+                        field=field,
+                        source="clarification_request",
+                    )
+
+            # Phase 5 Debug: Log clarification return details
+            logger.info(
+                "planner_v2.clarification.returning_to_pali",
+                checkpoint_id=checkpoint_id,
+                round=clarification_round,
+                question_count=len(questions),
+                missing_fields=missing_fields,
+                has_clarification_request=clarification_request is not None,
+            )
+
             return {
                 "action": "return",
                 "result": self._create_result(
@@ -860,9 +885,9 @@ class PlannerAgentV2(BaseAgent):
                         "action": "needs_clarification",
                         "round": clarification_round,
                         "max_rounds": self.max_clarification_rounds,
-                        "questions": result.get("data", {}).get("questions", []),
-                        "missing_fields": result.get("data", {}).get("missing_fields", []),
-                        "clarification_request": result.get("data", {}).get("clarification_request"),
+                        "questions": questions,
+                        "missing_fields": missing_fields,
+                        "clarification_request": clarification_request,
                     },
                     error="Clarification needed",
                     error_code="CLARIFICATION_NEEDED",
@@ -1058,16 +1083,55 @@ class PlannerAgentV2(BaseAgent):
         )
 
         # Build GenerationParameters
-        # Note: steps and guidance_scale are Optional - don't apply defaults here
-        # GenPlan decides which params are supported based on model config
+        # DYNAMIC PARAMETER HANDLING:
+        # - Extract core dimensions (width, height, num_images) explicitly
+        # - Pass ALL other params from model_input_params through provider_settings
+        # - GenPlan determines which params are supported based on model config
+        # - This allows flexibility for new parameters without code changes
+
+        # Core params that are always present
+        width = model_input_params.get("width", requirements.get("width", 1024))
+        height = model_input_params.get("height", requirements.get("height", 1024))
+        num_images = model_input_params.get("num_images", 1)
+        seed = model_input_params.get("seed")
+
+        # Dynamic params - extract steps and cfg_scale (GenPlan uses cfg_scale, not guidance_scale)
+        steps = model_input_params.get("steps")
+        guidance_scale = model_input_params.get("cfg_scale") or model_input_params.get("guidance_scale")
+
+        # Merge all remaining model_input_params with provider_params for flexibility
+        # This ensures any new params from model config flow through
+        all_provider_settings = {**provider_params}
+
+        # Add any extra model_input_params that aren't core fields
+        core_fields = {"width", "height", "num_images", "seed", "steps", "cfg_scale", "guidance_scale"}
+        for key, value in model_input_params.items():
+            if key not in core_fields and value is not None:
+                all_provider_settings[key] = value
+
         gen_params = GenerationParameters(
-            width=model_input_params.get("width", requirements.get("width", 1024)),
-            height=model_input_params.get("height", requirements.get("height", 1024)),
-            steps=model_input_params.get("steps"),  # No default - respect GenPlan's decision
-            guidance_scale=model_input_params.get("guidance_scale"),  # No default
-            seed=model_input_params.get("seed"),
-            num_images=model_input_params.get("num_images", 1),
-            provider_settings=provider_params,
+            width=width,
+            height=height,
+            steps=steps,
+            guidance_scale=guidance_scale,
+            seed=seed,
+            num_images=num_images,
+            provider_settings=all_provider_settings,
+        )
+
+        # Phase 5 Debug: Log parameter flow from GenPlan -> Planner
+        logger.info(
+            "planner_v2.build_assembly.params_debug",
+            job_id=context.job_id,
+            model_id=model_id,
+            genplan_model_input_params=model_input_params,
+            genplan_provider_params=provider_params,
+            final_steps=steps,
+            final_guidance_scale=guidance_scale,
+            final_num_images=num_images,
+            final_width=width,
+            final_height=height,
+            provider_settings_keys=list(all_provider_settings.keys()) if all_provider_settings else [],
         )
 
         # Build safety

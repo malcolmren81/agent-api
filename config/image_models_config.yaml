@@ -80,7 +80,13 @@ model_registry:
 
     specs:
       prompt_length: "1-2000 characters"
-      number_of_results: "multiple of 4 (4, 8, 12, 16, 20)"
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "discrete"
+        valid_values: [4, 8, 12, 16, 20]
+        default: 4
+        normalize: "round_up_to_valid"
+        description: "Must be multiple of 4 (4, 8, 12, 16, 20)"
       reference_images: 1
       dimensions:
         - "1456x816 (16:9)"
@@ -159,6 +165,13 @@ model_registry:
     specs:
       prompt_length: "1-2000 characters"
       negative_prompt: "1-2000 characters"
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "range"
+        min: 1
+        max: 20
+        default: 1
+        description: "Flexible range 1-20"
       reference_images: 0
       style_reference_images: 4
       dimensions:
@@ -319,6 +332,13 @@ model_registry:
 
     specs:
       prompt_length: "1-3000 characters"
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "range"
+        min: 1
+        max: 20
+        default: 1
+        description: "Flexible range 1-20"
       reference_images: 9
       total_input_capacity: "9 megapixels"
       dimensions:
@@ -361,6 +381,13 @@ model_registry:
 
     specs:
       prompt_length: "1-3000 characters"
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "range"
+        min: 1
+        max: 20
+        default: 1
+        description: "Flexible range 1-20"
       reference_images: 10
       total_input_capacity: "14 megapixels"
       cfg_scale:
@@ -407,6 +434,13 @@ model_registry:
 
     specs:
       prompt_length: "2-3000 characters"
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "range"
+        min: 1
+        max: 20
+        default: 1
+        description: "Flexible range 1-20"
       reference_images: 2
       dimensions:
         - "1568x672 (21:9)"
@@ -450,7 +484,13 @@ model_registry:
     specs:
       prompt_length: "2-3000 characters"
       prompt_tokens: 480
-      number_of_results: "1-4"
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "range"
+        min: 1
+        max: 4
+        default: 1
+        description: "Range 1-4 only"
       reference_images: 0
       dimensions:
         - "1024x1024 (1:1)"
@@ -490,7 +530,13 @@ model_registry:
     specs:
       prompt_length: "2-3000 characters"
       prompt_tokens: 480
-      number_of_results: "1-4"
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "range"
+        min: 1
+        max: 4
+        default: 1
+        description: "Range 1-4 only"
       reference_images: 0
       dimensions:
         - "1024x1024 (1:1)"
@@ -536,6 +582,13 @@ model_registry:
 
     specs:
       prompt_length: "2-3000 characters"
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "range"
+        min: 1
+        max: 20
+        default: 1
+        description: "Flexible range 1-20"
       reference_images: 8
       dimensions:
         text_to_image:
@@ -582,6 +635,13 @@ model_registry:
 
     specs:
       prompt_length: "3-45000 characters"
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "range"
+        min: 1
+        max: 20
+        default: 1
+        description: "Flexible range 1-20"
       reference_images: 14
       dimensions:
         1k:
@@ -657,6 +717,13 @@ model_registry:
 
     specs:
       prompt_length: "1-2000 characters"
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "range"
+        min: 1
+        max: 20
+        default: 1
+        description: "Flexible range 1-20"
       reference_images: 14
       sequential_images: "multiple related outputs"
       combined_limit: "reference + sequential <= 15"
@@ -714,7 +781,11 @@ model_registry:
     specs:
       prompt_length: "max 800 characters"
       negative_prompt: "max 500 characters"
-      number_of_results: 1
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "fixed"
+        value: 1
+        description: "Fixed at 1 only"
       reference_images: 0
       dimensions:
         - "1664x928 (16:9)"
@@ -756,7 +827,13 @@ model_registry:
       prompt_length: "max 800 characters"
       negative_prompt: "max 500 characters"
       input_images: "1-3 images"
-      number_of_results: "1-6 (plus), 1 (standard)"
+      # Machine-readable constraint for numberResults validation
+      number_of_results:
+        type: "range"
+        min: 1
+        max: 6
+        default: 1
+        description: "Range 1-6 (plus tier), 1 (standard)"
       input_requirements:
         min_size: 384
         max_size: 3072

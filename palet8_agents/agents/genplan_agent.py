@@ -1130,10 +1130,15 @@ class GenPlanAgent(BaseAgent):
             field=question_data.get("field"),
         )
 
+        # Extract field name from question_data for missing_fields list
+        field = question_data.get("field")
+        missing_fields = [field] if field else []
+
         return self._create_result(
             success=True,
             data={
                 "needs_clarification": True,
+                "missing_fields": missing_fields,  # Required by Planner/Pali
                 "clarification_request": question_data,
                 "partial_state": {
                     "complexity": state.complexity,

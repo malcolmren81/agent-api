@@ -196,6 +196,7 @@ class ImageGenerationService:
         self._model_air_ids: Dict[str, str] = {}  # model_name -> air_id
         self._model_supports_cfg: Dict[str, bool] = {}  # model_name -> supports CFGScale
         self._model_supports_steps: Dict[str, bool] = {}  # model_name -> supports steps
+        self._model_num_results_spec: Dict[str, Dict[str, Any]] = {}  # model_name -> number_of_results spec
         self._load_model_config()
 
     # Models that support steps parameter (whitelist approach for safety)
@@ -256,6 +257,13 @@ class ImageGenerationService:
                     else:
                         # Default to False - safer to not send steps
                         self._model_supports_steps[model_id] = False
+
+                    # Load number_of_results constraints if present (Phase 0 validation)
+                    # Supports: type="discrete" (valid_values list), "range" (min/max), "fixed" (single value)
+                    num_results_spec = specs.get("number_of_results")
+                    if isinstance(num_results_spec, dict):
+                        self._model_num_results_spec[model_id] = num_results_spec
+                        logger.debug(f"image_gen.num_results_spec.loaded: model={model_id}, spec={num_results_spec.get('type')}")
 
                     # Load cost data
                     cost_data = model_data.get("cost", {})
@@ -452,6 +460,73 @@ class ImageGenerationService:
         logger.warning(f"_supports_steps: model={model_name}, result=False (unknown model, defaulting to safe)")
         return False
 
+    def _validate_num_images(self, model_name: str, num_images: int) -> int:
+        """
+        Validate and normalize numberResults based on model-specific constraints.
+
+        Different models have different constraints:
+        - Midjourney: discrete values only (4, 8, 12, 16, 20)
+        - Imagen: range 1-4
+        - Qwen-Image: fixed at 1
+        - Others: flexible range 1-20
+
+        Args:
+            model_name: Model name (not AIR ID)
+            num_images: Requested number of images
+
+        Returns:
+            Validated/normalized number of images
+        """
+        # Get spec for this model
+        spec = self._model_num_results_spec.get(model_name)
+
+        # Also try case-insensitive match
+        if spec is None:
+            model_lower = model_name.lower()
+            for model_id, model_spec in self._model_num_results_spec.items():
+                if model_id.lower() == model_lower:
+                    spec = model_spec
+                    break
+
+        # No spec found - return as-is (fallback to API validation)
+        if spec is None:
+            logger.debug(f"_validate_num_images: no spec for {model_name}, using {num_images}")
+            return num_images
+
+        spec_type = spec.get("type", "range")
+        original = num_images
+
+        if spec_type == "fixed":
+            # Model only supports a single value
+            validated = spec.get("value", 1)
+
+        elif spec_type == "discrete":
+            # Model supports specific values only (e.g., Midjourney: 4, 8, 12, 16, 20)
+            valid_values = spec.get("valid_values", [4])
+            if num_images in valid_values:
+                validated = num_images
+            else:
+                # Round up to nearest valid value
+                validated = next((v for v in sorted(valid_values) if v >= num_images), max(valid_values))
+
+        elif spec_type == "range":
+            # Model supports a range
+            min_val = spec.get("min", 1)
+            max_val = spec.get("max", 20)
+            validated = max(min_val, min(num_images, max_val))
+
+        else:
+            validated = num_images
+
+        if validated != original:
+            logger.info(
+                f"image_gen.num_images_normalized: "
+                f"model={model_name}, original={original}, validated={validated}, "
+                f"spec_type={spec_type}"
+            )
+
+        return validated
+
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
         if self._client is None:
@@ -540,6 +615,10 @@ class ImageGenerationService:
         # Generate unique taskUUID for this request (required by Runware API)
         task_uuid = str(uuid.uuid4())
 
+        # Validate num_images against model-specific constraints
+        # (e.g., Midjourney only accepts 4, 8, 12, 16, 20)
+        validated_num_images = self._validate_num_images(model_name, request.num_images)
+
         payload = {
             "taskType": "imageInference",  # Required by Runware API
             "taskUUID": task_uuid,  # Required: UUID v4 for matching async responses
@@ -548,7 +627,7 @@ class ImageGenerationService:
             "model": model,
             "width": width,
             "height": height,
-            "numberResults": request.num_images,
+            "numberResults": validated_num_images,
         }
 
         # Only add steps if the model supports it AND steps was provided

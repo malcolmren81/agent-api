@@ -198,7 +198,7 @@ class AssemblyService:
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
                 success=False,
-                error_detail=str(e),
+                error=str(e),
                 error_code="GENERATION_ERROR",
                 job_id=request.job_id,
                 task_id=task_id,
@@ -239,7 +239,7 @@ class AssemblyService:
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
                 success=False,
-                error_detail=str(e),
+                error=str(e),
                 error_code="UNEXPECTED_ERROR",
                 job_id=request.job_id,
                 task_id=task_id,
