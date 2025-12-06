@@ -273,11 +273,29 @@ class ImageGenerationService:
 
                 # Log which models support steps for debugging
                 steps_supported = [m for m, s in self._model_supports_steps.items() if s]
-                logger.info(f"image_generation_service.config.loaded: models={len(self._model_air_ids)}, steps_support={steps_supported}")
+                steps_not_supported = [m for m, s in self._model_supports_steps.items() if not s]
+                logger.info(
+                    f"image_generation_service.config.loaded: "
+                    f"total_models={len(self._model_air_ids)}, "
+                    f"steps_supported={steps_supported}, "
+                    f"steps_blocked={steps_not_supported[:5]}..."  # Show first 5 for brevity
+                )
+                logger.debug(f"image_generation_service.config.details: air_ids={list(self._model_air_ids.keys())}")
             else:
-                logger.warning(f"image_generation_service.config.not_found: path={self.IMAGE_MODELS_CONFIG_PATH}")
+                # Config file not found - log error but still use hardcoded lists
+                logger.error(
+                    f"image_generation_service.config.not_found: "
+                    f"path={self.IMAGE_MODELS_CONFIG_PATH}, "
+                    f"cwd={Path.cwd()}, "
+                    f"falling back to hardcoded MODELS_WITH_STEPS_SUPPORT and MODELS_WITHOUT_STEPS"
+                )
         except Exception as e:
-            logger.warning(f"image_generation_service.config.load_error: {e}")
+            logger.error(
+                f"image_generation_service.config.load_error: {e}, "
+                f"falling back to hardcoded lists. "
+                f"MODELS_WITH_STEPS_SUPPORT={list(self.MODELS_WITH_STEPS_SUPPORT)}, "
+                f"MODELS_WITHOUT_STEPS={list(self.MODELS_WITHOUT_STEPS)}"
+            )
 
     def _get_model_cost(self, model: str) -> float:
         """
@@ -360,9 +378,11 @@ class ImageGenerationService:
         Check if a model supports steps parameter.
 
         Uses a multi-layer approach:
-        1. Check loaded config
-        2. Check whitelist (MODELS_WITH_STEPS_SUPPORT)
-        3. Default to False (safe default)
+        1. Check loaded config (exact match)
+        2. Check loaded config (case-insensitive match)
+        3. Check whitelist MODELS_WITH_STEPS_SUPPORT
+        4. Check blocklist MODELS_WITHOUT_STEPS (with prefix matching)
+        5. Default to False (safe default)
 
         Args:
             model_name: Model name (not AIR ID)
@@ -370,6 +390,17 @@ class ImageGenerationService:
         Returns:
             True if model supports steps, False otherwise
         """
+        # Handle None or empty model name
+        if not model_name:
+            logger.warning("_supports_steps: empty model_name, returning False")
+            return False
+
+        # Strip AIR format if passed (e.g., "midjourney:3@1" -> use blocklist check)
+        if ":" in model_name:
+            logger.debug(f"_supports_steps: model_name contains AIR format: {model_name}")
+            # AIR format models are provider-hosted, default to no steps
+            return False
+
         # Direct lookup from loaded config
         if model_name in self._model_supports_steps:
             result = self._model_supports_steps[model_name]
@@ -383,15 +414,36 @@ class ImageGenerationService:
                 logger.debug(f"_supports_steps: model={model_name}, result={supports} (case-insensitive match)")
                 return supports
 
-        # Fallback to whitelist
+        # Fallback to whitelist (exact and prefix match)
         if model_name in self.MODELS_WITH_STEPS_SUPPORT:
-            logger.debug(f"_supports_steps: model={model_name}, result=True (whitelist)")
+            logger.debug(f"_supports_steps: model={model_name}, result=True (whitelist exact)")
             return True
 
-        # Check blocklist explicitly
+        # Check if model starts with a whitelisted prefix (e.g., "flux-2-flex-v2" matches "flux-2-flex")
+        for whitelisted in self.MODELS_WITH_STEPS_SUPPORT:
+            if model_name.startswith(whitelisted) or whitelisted.startswith(model_name):
+                logger.debug(f"_supports_steps: model={model_name}, result=True (whitelist prefix: {whitelisted})")
+                return True
+
+        # Check blocklist explicitly (exact match)
         if model_name in self.MODELS_WITHOUT_STEPS:
-            logger.debug(f"_supports_steps: model={model_name}, result=False (blocklist)")
+            logger.debug(f"_supports_steps: model={model_name}, result=False (blocklist exact)")
             return False
+
+        # Check blocklist with prefix matching (e.g., "midjourney-v7-fast" matches "midjourney-v7")
+        for blocked in self.MODELS_WITHOUT_STEPS:
+            if model_name.startswith(blocked) or blocked.startswith(model_name):
+                logger.debug(f"_supports_steps: model={model_name}, result=False (blocklist prefix: {blocked})")
+                return False
+
+        # Check base model name (split on hyphen, take first 2 parts)
+        # e.g., "midjourney-v7-experimental" -> "midjourney-v7"
+        parts = model_name.split("-")
+        if len(parts) >= 2:
+            base_name = "-".join(parts[:2])
+            if base_name in self.MODELS_WITHOUT_STEPS:
+                logger.debug(f"_supports_steps: model={model_name}, result=False (base name match: {base_name})")
+                return False
 
         # Default to False for unknown models (safer - don't send unsupported params)
         logger.warning(f"_supports_steps: model={model_name}, result=False (unknown model, defaulting to safe)")
