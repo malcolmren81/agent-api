@@ -195,6 +195,29 @@ class ImageGenerationService:
         self._model_supports_steps: Dict[str, bool] = {}  # model_name -> supports steps
         self._load_model_config()
 
+    # Models that support steps parameter (whitelist approach for safety)
+    # Only diffusion models (FLUX, SD-based) support steps
+    MODELS_WITH_STEPS_SUPPORT = frozenset({
+        "flux-2-flex",
+        "flux-2-pro",
+        # Add other diffusion models here if needed
+    })
+
+    # Models that do NOT support steps (provider-hosted models)
+    # These models use proprietary inference and don't expose steps
+    MODELS_WITHOUT_STEPS = frozenset({
+        "midjourney-v7",
+        "ideogram-3",
+        "imagen-4-preview",
+        "imagen-4-ultra",
+        "nano-banana",
+        "nano-banana-2-pro",
+        "seedream-4",
+        "flux-1-kontext-pro",
+        "qwen-image",
+        "qwen-image-edit",
+    })
+
     def _load_model_config(self) -> None:
         """
         Load model costs and AIR IDs from image_models_config.yaml.
@@ -203,6 +226,7 @@ class ImageGenerationService:
         - Costs per image from model_registry entries
         - AIR IDs for Runware API calls
         - CFGScale support per model
+        - Steps support per model (with whitelist fallback)
         """
         try:
             if self.IMAGE_MODELS_CONFIG_PATH.exists():
@@ -218,8 +242,17 @@ class ImageGenerationService:
                     # Check if model supports CFGScale (only if specs.cfg_scale exists)
                     specs = model_data.get("specs", {})
                     self._model_supports_cfg[model_id] = "cfg_scale" in specs
-                    # Check if model supports steps (only if specs.steps exists)
-                    self._model_supports_steps[model_id] = "steps" in specs
+
+                    # Check if model supports steps:
+                    # 1. Check if specs.steps exists in YAML
+                    # 2. Fallback to whitelist if not in YAML
+                    if "steps" in specs:
+                        self._model_supports_steps[model_id] = True
+                    elif model_id in self.MODELS_WITH_STEPS_SUPPORT:
+                        self._model_supports_steps[model_id] = True
+                    else:
+                        # Default to False - safer to not send steps
+                        self._model_supports_steps[model_id] = False
 
                     # Load cost data
                     cost_data = model_data.get("cost", {})
@@ -238,9 +271,13 @@ class ImageGenerationService:
                     elif "output_first_mp" in cost_data:
                         self._model_costs[model_id] = cost_data["output_first_mp"]
 
-                logger.debug(f"Loaded config for {len(self._model_air_ids)} models (AIR IDs), {len(self._model_costs)} costs, CFG support tracked")
+                # Log which models support steps for debugging
+                steps_supported = [m for m, s in self._model_supports_steps.items() if s]
+                logger.info(f"image_generation_service.config.loaded: models={len(self._model_air_ids)}, steps_support={steps_supported}")
+            else:
+                logger.warning(f"image_generation_service.config.not_found: path={self.IMAGE_MODELS_CONFIG_PATH}")
         except Exception as e:
-            logger.warning(f"Failed to load model config: {e}")
+            logger.warning(f"image_generation_service.config.load_error: {e}")
 
     def _get_model_cost(self, model: str) -> float:
         """
@@ -322,23 +359,42 @@ class ImageGenerationService:
         """
         Check if a model supports steps parameter.
 
+        Uses a multi-layer approach:
+        1. Check loaded config
+        2. Check whitelist (MODELS_WITH_STEPS_SUPPORT)
+        3. Default to False (safe default)
+
         Args:
             model_name: Model name (not AIR ID)
 
         Returns:
             True if model supports steps, False otherwise
         """
-        # Direct lookup
+        # Direct lookup from loaded config
         if model_name in self._model_supports_steps:
-            return self._model_supports_steps[model_name]
+            result = self._model_supports_steps[model_name]
+            logger.debug(f"_supports_steps: model={model_name}, result={result} (from config)")
+            return result
 
-        # Try case-insensitive match
+        # Try case-insensitive match in config
         model_lower = model_name.lower()
         for model_id, supports in self._model_supports_steps.items():
             if model_id.lower() == model_lower:
+                logger.debug(f"_supports_steps: model={model_name}, result={supports} (case-insensitive match)")
                 return supports
 
-        # Default to False for unknown models (safer)
+        # Fallback to whitelist
+        if model_name in self.MODELS_WITH_STEPS_SUPPORT:
+            logger.debug(f"_supports_steps: model={model_name}, result=True (whitelist)")
+            return True
+
+        # Check blocklist explicitly
+        if model_name in self.MODELS_WITHOUT_STEPS:
+            logger.debug(f"_supports_steps: model={model_name}, result=False (blocklist)")
+            return False
+
+        # Default to False for unknown models (safer - don't send unsupported params)
+        logger.warning(f"_supports_steps: model={model_name}, result=False (unknown model, defaulting to safe)")
         return False
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -441,16 +497,22 @@ class ImageGenerationService:
         }
 
         # Only add steps if the model supports it (e.g., flux-2-flex)
-        # Models like flux-1-kontext-pro don't support steps
-        if self._supports_steps(model_name):
+        # Provider-hosted models (Midjourney, Ideogram, Google) don't support steps
+        supports_steps = self._supports_steps(model_name)
+        if supports_steps:
             payload["steps"] = request.steps
-            logger.debug(f"Model {model_name} supports steps, added value: {request.steps}")
+            logger.info(f"runware.payload.steps_added: model={model_name}, steps={request.steps}")
+        else:
+            logger.info(f"runware.payload.steps_skipped: model={model_name} (not supported)")
 
         # Only add CFGScale if the model supports it (e.g., flux-2-flex)
-        # Models like flux-1-kontext-pro don't support CFGScale
-        if self._supports_cfg_scale(model_name):
+        # Provider-hosted models don't support CFGScale
+        supports_cfg = self._supports_cfg_scale(model_name)
+        if supports_cfg:
             payload["CFGScale"] = request.guidance_scale
-            logger.debug(f"Model {model_name} supports CFGScale, added value: {request.guidance_scale}")
+            logger.info(f"runware.payload.cfg_added: model={model_name}, cfg={request.guidance_scale}")
+        else:
+            logger.debug(f"runware.payload.cfg_skipped: model={model_name} (not supported)")
 
         if request.negative_prompt:
             payload["negativePrompt"] = request.negative_prompt
@@ -480,7 +542,9 @@ class ImageGenerationService:
                 payload[mapped_key] = value
 
         try:
-            logger.info(f"Runware API request: taskUUID={task_uuid}, model={model}, size={width}x{height}")
+            # Log payload keys for debugging (don't log full prompt for privacy)
+            payload_keys = list(payload.keys())
+            logger.info(f"runware.api.request: taskUUID={task_uuid}, model_name={model_name}, air_id={model}, size={width}x{height}, payload_keys={payload_keys}")
 
             # Runware API requires the request payload to be an array of objects
             response = await client.post(
