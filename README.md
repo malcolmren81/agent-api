@@ -22,27 +22,29 @@ Multi-agent orchestration service for AI-powered design generation. Transforms u
 | Database | Connected (Cloud SQL) |
 | Migrations | Auto-run on startup |
 | Chat Workflow | Active |
-| Image Generation | Runware API |
+| Image Generation | Runware API (Multi-provider) |
 
 ## Architecture
 
-### Inline Orchestration Pattern
+### Agent Flow
 
-The system uses an **inline orchestration** pattern where:
-- **Pali** is always on as the **communication layer** (user ↔ system)
-- **Planner** stays inline as the **central orchestrator** (doesn't exit until complete)
-- **Specialized agents** (ReactPrompt, Evaluator, Safety) are invoked only at checkpoints
+The system uses a **modular orchestration** pattern with clear agent boundaries:
 
 ```
 User ←→ /chat/generate ←→ PALI (always on, communication layer)
                               │
                               ▼
-                         PLANNER (inline orchestrator)
+                         PLANNER (pure orchestrator)
                               │
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-        ReactPrompt    AssemblyService   Evaluator
-        (checkpoint)    (checkpoint)    (checkpoint)
+    ┌─────────────────────────┼─────────────────────────┐
+    ▼                         ▼                         ▼
+ GenPlan              ReactPrompt               Evaluator
+ (generation planning)  (prompt building)       (quality gates)
+    │
+    ├── Complexity analysis
+    ├── Genflow selection (single/dual pipeline)
+    ├── Model selection
+    └── Parameter extraction
 ```
 
 ### Agent Responsibilities
@@ -58,31 +60,63 @@ User ←→ /chat/generate ←→ PALI (always on, communication layer)
 ╚═══════════════════════════════════════════════════════════════════╝
                               │
 ╔═══════════════════════════════════════════════════════════════════╗
-║  PLANNER AGENT - Inline Orchestrator                              ║
-║  (Stays active throughout generation until user confirms)         ║
+║  PLANNER AGENT - Pure Orchestrator                                ║
+║  (Follows pipeline_methods.yaml checkpoints)                      ║
 ║  - Context evaluation & sufficiency check                         ║
 ║  - Safety classification                                          ║
-║  - Complexity classification (RELAX/STANDARD/COMPLEX)             ║
-║  - Delegates prompt building to ReactPrompt (checkpoint)          ║
-║  - Model/pipeline selection                                       ║
-║  - Delegates pre-gen evaluation to Evaluator (checkpoint)         ║
-║  - Executes generation via Assembly Service (checkpoint)          ║
-║  - Delegates post-gen evaluation to Evaluator (checkpoint)        ║
+║  - Delegates generation planning to GenPlan                       ║
+║  - Delegates prompt building to ReactPrompt                       ║
+║  - Delegates evaluation to Evaluator                              ║
+║  - Executes generation via Assembly Service                       ║
 ║  - Handles retry loops on rejection (max 3 retries)               ║
 ╚═══════════════════════════════════════════════════════════════════╝
                               │
-          ┌───────────────────┼───────────────────┐
-          ▼                   ▼                   ▼
+    ┌─────────────────────────┼─────────────────────────┐
+    ▼                         ▼                         ▼
 ╔═══════════════════╗ ╔═══════════════════╗ ╔═══════════════════╗
-║ REACT PROMPT      ║ ║ ASSEMBLY SERVICE  ║ ║ EVALUATOR AGENT   ║
-║ (checkpoint)      ║ ║ (checkpoint)      ║ ║ (checkpoint)      ║
-║ - Context build   ║ ║ - Single/Dual     ║ ║ - Prompt quality  ║
-║ - Dimension       ║ ║   pipeline        ║ ║   (pre-gen)       ║
-║   selection       ║ ║ - Runware API     ║ ║ - Result quality  ║
-║ - Prompt compose  ║ ║ - Progress stream ║ ║   (post-gen)      ║
-║ - Quality scoring ║ ║ - Cost tracking   ║ ║ - Pass/Fix/Reject ║
-╚═══════════════════╝ ╚═══════════════════╝ ╚═══════════════════╝
+║ GENPLAN AGENT     ║ ║ REACT PROMPT      ║ ║ EVALUATOR AGENT   ║
+║ (NEW)             ║ ║                   ║ ║                   ║
+║ - Complexity      ║ ║ - Context build   ║ ║ - Prompt quality  ║
+║   analysis        ║ ║ - Dimension       ║ ║   (pre-gen)       ║
+║ - User info       ║ ║   selection       ║ ║ - Result quality  ║
+║   parsing         ║ ║ - Prompt compose  ║ ║   (post-gen)      ║
+║ - Genflow         ║ ║ - Quality scoring ║ ║ - Pass/Fix/Reject ║
+║   selection       ║ ║ - Question gen    ║ ║                   ║
+║ - Model selection ║ ╚═══════════════════╝ ╚═══════════════════╝
+║ - Parameter       ║
+║   extraction      ║
+╚═══════════════════╝
 ```
+
+### Pipeline Types
+
+| Pipeline | Description | Use Case |
+|----------|-------------|----------|
+| **Single** | One model generation | Simple requests, fast iteration |
+| **Dual** | Stage 1 (generate) + Stage 2 (refine) | Text overlays, character refinement |
+
+### Dual Pipeline Variants
+
+| Pipeline | Stage 1 | Stage 2 | Use Case |
+|----------|---------|---------|----------|
+| `creative_art` | midjourney-v7 | nano-banana-2-pro | Concept art, illustrations |
+| `photorealistic` | imagen-4-ultra | nano-banana-2-pro | Product photography |
+| `layout_poster` | flux-2-flex | qwen-image-edit | Posters, typography |
+
+## Supported Image Models
+
+### Via Runware API
+
+| Model | Provider | Best For |
+|-------|----------|----------|
+| `midjourney-v7` | Midjourney | Creative art, cinematic imagery |
+| `ideogram-3` | Ideogram | Text rendering, logos |
+| `flux-2-flex` | BFL | Typography, posters |
+| `flux-2-pro` | BFL | High-quality generations |
+| `imagen-4-ultra` | Google | Photorealistic images |
+| `nano-banana-2-pro` | Google | Image editing, refinement |
+| `seedream-4` | ByteDance | Artistic styles |
+| `qwen-image-edit` | Alibaba | Image editing, text correction |
 
 ## API Endpoints
 
@@ -102,6 +136,12 @@ User ←→ /chat/generate ←→ PALI (always on, communication layer)
 | `/api/agent-logs` | GET | Query agent execution logs |
 | `/api/templates` | GET | Get prompt templates |
 
+### Planner API
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/planner/models` | GET | List available image models |
+| `/planner/plan` | POST | Generate execution plan |
+
 ### Health & Monitoring
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -113,71 +153,70 @@ User ←→ /chat/generate ←→ PALI (always on, communication layer)
 
 ```
 agents-api/
-+-- palet8_agents/              # Core agent system
-|   +-- agents/                 # Agent implementations
-|   |   +-- pali_agent.py       # Always-on communication layer
-|   |   |                       #   - handle_generate_request()
-|   |   |                       #   - confirm_and_complete()
-|   |   +-- planner_agent_v2.py # Inline orchestrator
-|   |   |                       #   - orchestrate_generation()
-|   |   |                       #   - _delegate_to_react_prompt()
-|   |   |                       #   - _delegate_to_evaluator()
-|   |   |                       #   - _execute_generation()
-|   |   +-- react_prompt_agent.py # Prompt building (checkpoint)
-|   |   +-- evaluator_agent_v2.py # Quality gates (checkpoint)
-|   |   +-- safety_agent.py     # Safety monitoring
-|   +-- core/                   # Framework (BaseAgent, Context, Message)
-|   +-- models/                 # Data models (shared across agents)
-|   |   +-- requirements.py     # RequirementsStatus
-|   |   +-- context.py          # ContextCompleteness
-|   |   +-- safety.py           # SafetyClassification, SafetyFlag
-|   |   +-- prompt.py           # PromptDimensions, PromptQualityResult
-|   |   +-- generation.py       # GenerationParameters, PipelineConfig
-|   |   +-- evaluation.py       # EvaluationPlan, ResultQualityResult
-|   +-- services/               # Business logic services
-|   |   +-- text_llm_service.py           # LLM text generation
-|   |   +-- reasoning_service.py          # Complex reasoning tasks
-|   |   +-- image_generation_service.py   # Image gen via Runware
-|   |   +-- assembly_service.py           # Pipeline orchestration
-|   |   +-- prompt_composer_service.py    # Prompt construction
-|   |   +-- embedding_service.py          # Vector embeddings
-|   +-- tools/                  # Agent tools
-|       +-- context_tool.py     # RAG, memory, references
-|       +-- safety_tool.py      # Content safety checks
-|       +-- registry.py         # Tool registry
-+-- src/
-|   +-- api/
-|   |   +-- main.py             # FastAPI app
-|   |   +-- routes/             # API endpoints
-|   |       +-- chat.py         # Chat API (Pali integration)
-|   |       +-- tasks.py        # Task logs API
-|   |       +-- agent_logs.py   # Agent execution logs
-|   |       +-- templates.py    # Prompt templates
-|   +-- database/               # Prisma client
-|   +-- models/                 # Pydantic schemas
-|   +-- utils/                  # Logger, metrics, health check
-+-- prisma/
-|   +-- schema.prisma           # Database schema
-+-- migrations/
-|   +-- init.sql                # Database migrations (auto-run)
-+-- config/                     # YAML configs
-|   +-- safety_config.yaml      # Safety rules
-|   +-- image_models_config.yaml # Model registry
-+-- Dockerfile
-+-- requirements.txt
+├── palet8_agents/              # Core agent system
+│   ├── agents/                 # Agent implementations
+│   │   ├── pali_agent.py       # Communication layer
+│   │   ├── planner_agent_v2.py # Pure orchestrator
+│   │   ├── genplan_agent.py    # Generation planning (NEW)
+│   │   ├── react_prompt_agent.py # Prompt building
+│   │   ├── evaluator_agent_v2.py # Quality gates
+│   │   ├── safety_agent.py     # Safety monitoring
+│   │   └── archive/            # Legacy agents
+│   ├── core/                   # Framework (BaseAgent, Context)
+│   ├── models/                 # Data models
+│   │   ├── genplan.py          # GenerationPlan, UserParseResult (NEW)
+│   │   ├── requirements.py     # RequirementsStatus
+│   │   ├── prompt.py           # PromptDimensions, PromptPlan
+│   │   ├── generation.py       # GenerationParameters, PipelineConfig
+│   │   └── evaluation.py       # EvaluationPlan, ResultQualityResult
+│   ├── services/               # Business logic services
+│   │   ├── genflow_service.py  # Pipeline selection (NEW)
+│   │   ├── model_selection_service.py # Model selection
+│   │   ├── assembly_service.py # Pipeline orchestration
+│   │   ├── image_generation_service.py # Runware API
+│   │   ├── text_llm_service.py # LLM text generation
+│   │   └── reasoning_service.py # Complex reasoning
+│   └── tools/                  # Agent tools
+├── src/
+│   ├── api/
+│   │   ├── main.py             # FastAPI app
+│   │   └── routes/             # API endpoints
+│   ├── database/               # Prisma client
+│   └── utils/                  # Logger, metrics
+├── config/                     # YAML configs
+│   ├── image_models_config.yaml # Model registry & specs
+│   ├── pipeline_methods.yaml   # Orchestration checkpoints (NEW)
+│   └── safety_config.yaml      # Safety rules
+├── prompts/
+│   └── genplan_system.txt      # GenPlan system prompt (NEW)
+├── docs/
+│   └── test/
+│       └── monitoring_activities.md # Log checkpoint docs
+├── tests/
+│   └── test_palet8_agents/     # Unit tests
+├── Dockerfile
+└── requirements.txt
 ```
 
-## Database Models
+## Configuration Files
 
-| Model | Purpose |
-|-------|---------|
-| **Job** | Agent task execution (status, requirements, plan, evaluation) |
-| **Conversation** | Multi-turn chat sessions |
-| **ChatMessage** | Conversation history |
-| **Design** | Generated design outputs |
-| **Task** | Full pipeline logs with performance metrics |
-| **AgentLog** | Per-agent execution tracking |
-| **Template** | Reusable prompt templates |
+### image_models_config.yaml
+Defines all supported models with:
+- AIR IDs for Runware API
+- Supported workflows (text-to-image, image-to-image)
+- Specs (dimensions, steps, parameters)
+- Provider-specific settings
+- Cost estimates
+
+### pipeline_methods.yaml
+Defines orchestration checkpoints:
+- context_check
+- safety_check
+- generation_plan (GenPlan)
+- prompt_build (ReactPrompt)
+- pre_evaluation (Evaluator)
+- execute_generation (Assembly)
+- post_evaluation (Evaluator)
 
 ## Local Development
 
@@ -204,6 +243,16 @@ cp .env.example .env
 uvicorn src.api.main:app --reload --port 8000
 ```
 
+### Running Tests
+```bash
+# Run all tests
+pytest
+
+# Run specific agent tests
+pytest tests/test_palet8_agents/agents/test_genplan_agent.py
+pytest tests/test_palet8_agents/services/test_genflow_service.py
+```
+
 ## Deployment
 
 The service uses automatic database migrations on startup via `migrations/init.sql`.
@@ -214,7 +263,10 @@ gcloud run deploy palet8-agents \
   --source . \
   --region us-central1 \
   --project palet8-system \
-  --allow-unauthenticated
+  --allow-unauthenticated \
+  --memory 2Gi \
+  --cpu 2 \
+  --timeout 300
 
 # Route traffic to latest
 gcloud run services update-traffic palet8-agents \
@@ -232,8 +284,6 @@ gcloud run services update-traffic palet8-agents \
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `RUNWARE_API_KEY` | Runware image generation API |
 | `FLUX_API_KEY` | Black Forest Labs Flux API |
-| `PALET8_API_URL` | Palet8 backend API URL |
-| `PALET8_API_KEY` | Palet8 backend API key |
 
 ## AI Models
 
@@ -243,18 +293,35 @@ gcloud run services update-traffic palet8-agents \
 - Automatic routing and fallback handling
 
 ### Image Generation (via Runware)
-- Flux Pro models
-- SDXL variants
-- Unified cost tracking
+- Midjourney V7
+- Ideogram 3
+- FLUX Pro/Flex
+- Imagen 4 Ultra
+- Nano Banana 2 Pro
+- Qwen Image Edit
 
 ## Key Features
 
-- **Cost Optimization**: Automatic model selection balances quality, speed, and cost
+- **Modular Agent Design**: Clear boundaries between GenPlan, ReactPrompt, Evaluator
+- **Smart Model Selection**: Scenario-based selection (art vs photo, with/without reference)
+- **Dual Pipeline Support**: Two-stage generation for complex requirements
 - **Quality Gates**: Multi-dimensional evaluation before and after generation
 - **Safety First**: Continuous content monitoring without blocking workflow
 - **Observability**: Full execution logging with performance metrics
 - **Auto Migrations**: Database schema applied on container startup
-- **Fallback Handling**: Automatic model switching on failures
+
+## Monitoring
+
+### Log Checkpoints
+All agents emit structured log events:
+- `genplan.run.start/complete`
+- `genplan.complexity.determined`
+- `genplan.model.selected`
+- `react_prompt.run.start/complete`
+- `assembly.execution.start/complete`
+- `evaluator.run.start/complete`
+
+See `docs/test/monitoring_activities.md` for full checkpoint documentation.
 
 ## Testing
 
@@ -262,11 +329,11 @@ gcloud run services update-traffic palet8-agents \
 # Health check
 curl https://palet8-agents-kshhjydolq-uc.a.run.app/health
 
+# List available models
+curl https://palet8-agents-kshhjydolq-uc.a.run.app/planner/models
+
 # Start conversation
 curl -X POST https://palet8-agents-kshhjydolq-uc.a.run.app/chat/start \
   -H "Content-Type: application/json" \
   -d '{"user_id": "test-user"}'
-
-# Query tasks
-curl https://palet8-agents-kshhjydolq-uc.a.run.app/api/tasks
 ```
