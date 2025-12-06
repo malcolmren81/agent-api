@@ -265,6 +265,7 @@ class PlannerAgentV2(BaseAgent):
         # Thresholds
         self.min_context_completeness = 0.5
         self.max_retries = 3
+        self.max_clarification_rounds = 3  # Max rounds of user clarification before proceeding
 
     # =========================================================================
     # Service Getters
@@ -329,6 +330,9 @@ class PlannerAgentV2(BaseAgent):
         self._pali_callback = pali_callback
         retry_count = 0
 
+        # Track clarification rounds (persisted across orchestration calls)
+        clarification_round = context.metadata.get("clarification_round", 0)
+
         # Set correlation context
         set_correlation_context(
             job_id=context.job_id,
@@ -339,6 +343,7 @@ class PlannerAgentV2(BaseAgent):
             "planner_v2.orchestration.start",
             job_id=context.job_id,
             has_pali_callback=pali_callback is not None,
+            clarification_round=clarification_round,
         )
 
         try:
@@ -675,6 +680,20 @@ class PlannerAgentV2(BaseAgent):
                 logger.error("planner_v2.react_prompt.failed", err_msg=result.error)
                 return {"success": False, "error": result.error}
 
+            # Check if clarification is needed (similar to GenPlan at lines 624-630)
+            # ReactPrompt returns success=True but with needs_clarification in data
+            if result.data and result.data.get("needs_clarification"):
+                logger.info(
+                    "planner_v2.react_prompt.clarification_needed",
+                    missing_fields=result.data.get("missing_fields", []),
+                    question_count=len(result.data.get("questions", [])),
+                )
+                return {
+                    "success": False,
+                    "needs_clarification": True,
+                    "data": result.data,
+                }
+
             # Prompt plan stored in context.metadata["prompt_plan"]
             return {"success": True, "data": result.data}
 
@@ -809,6 +828,29 @@ class PlannerAgentV2(BaseAgent):
         )
 
         if on_fail == "request_clarification" or result.get("needs_clarification"):
+            # Track clarification rounds
+            clarification_round = context.metadata.get("clarification_round", 0) + 1
+            context.metadata["clarification_round"] = clarification_round
+
+            logger.info(
+                "planner_v2.clarification.round",
+                checkpoint_id=checkpoint_id,
+                round=clarification_round,
+                max_rounds=self.max_clarification_rounds,
+            )
+
+            # Check if max rounds exceeded
+            if clarification_round > self.max_clarification_rounds:
+                logger.warning(
+                    "planner_v2.clarification.max_rounds_exceeded",
+                    checkpoint_id=checkpoint_id,
+                    rounds=clarification_round,
+                )
+                # Proceed with best effort using defaults
+                return await self._apply_clarification_defaults(
+                    context, checkpoint, result
+                )
+
             # Route clarification through Pali
             return {
                 "action": "return",
@@ -816,6 +858,8 @@ class PlannerAgentV2(BaseAgent):
                     success=False,
                     data={
                         "action": "needs_clarification",
+                        "round": clarification_round,
+                        "max_rounds": self.max_clarification_rounds,
                         "questions": result.get("data", {}).get("questions", []),
                         "missing_fields": result.get("data", {}).get("missing_fields", []),
                         "clarification_request": result.get("data", {}).get("clarification_request"),
@@ -873,6 +917,63 @@ class PlannerAgentV2(BaseAgent):
                 error_code="CHECKPOINT_FAILED",
             ),
         }
+
+    async def _apply_clarification_defaults(
+        self,
+        context: AgentContext,
+        checkpoint: Dict[str, Any],
+        result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Apply defaults after max clarification rounds exceeded.
+
+        When user has not provided sufficient context after multiple rounds,
+        proceed with best effort using reasonable defaults.
+        """
+        checkpoint_id = checkpoint.get("id")
+        missing_fields = result.get("data", {}).get("missing_fields", [])
+
+        logger.info(
+            "planner_v2.clarification.applying_defaults",
+            checkpoint_id=checkpoint_id,
+            missing_fields=missing_fields,
+        )
+
+        requirements = context.requirements or {}
+
+        # Define default values for missing fields
+        field_defaults = {
+            "style": "photorealistic",
+            "mood": "neutral",
+            "colors": [],
+            "product_type": "general",
+            "dimensions": {"width": 1024, "height": 1024},
+            "character": None,
+            "reference_image": None,
+            "text_content": None,
+        }
+
+        # Apply defaults for missing fields
+        defaults_applied = []
+        for field in missing_fields:
+            if field in field_defaults and field not in requirements:
+                requirements[field] = field_defaults[field]
+                defaults_applied.append(field)
+
+        context.requirements = requirements
+
+        logger.info(
+            "planner_v2.clarification.defaults_applied",
+            checkpoint_id=checkpoint_id,
+            defaults_applied=defaults_applied,
+        )
+
+        # Mark that we proceeded with defaults (for quality warnings)
+        context.metadata["proceeded_with_defaults"] = True
+        context.metadata["defaults_applied"] = defaults_applied
+
+        # Continue to next checkpoint (retry current one with defaults)
+        return {"action": "continue"}
 
     # =========================================================================
     # Internal Checks
@@ -957,11 +1058,13 @@ class PlannerAgentV2(BaseAgent):
         )
 
         # Build GenerationParameters
+        # Note: steps and guidance_scale are Optional - don't apply defaults here
+        # GenPlan decides which params are supported based on model config
         gen_params = GenerationParameters(
             width=model_input_params.get("width", requirements.get("width", 1024)),
             height=model_input_params.get("height", requirements.get("height", 1024)),
-            steps=model_input_params.get("steps", 30),
-            guidance_scale=model_input_params.get("guidance_scale", 7.5),
+            steps=model_input_params.get("steps"),  # No default - respect GenPlan's decision
+            guidance_scale=model_input_params.get("guidance_scale"),  # No default
             seed=model_input_params.get("seed"),
             num_images=model_input_params.get("num_images", 1),
             provider_settings=provider_params,

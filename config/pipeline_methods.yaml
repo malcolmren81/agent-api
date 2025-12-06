@@ -63,7 +63,7 @@ pipeline_methods:
         handler: "agent"
         agent: "react_prompt"
         description: "Build context, select dimensions, compose prompt"
-        on_fail: "retry"
+        on_fail: "request_clarification"
         max_retries: 3
         outputs:
           - prompt

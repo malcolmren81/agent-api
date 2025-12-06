@@ -23,38 +23,47 @@ class ExecutionStatus(Enum):
 
 @dataclass
 class GenerationParameters:
-    """Image generation parameters."""
+    """Image generation parameters.
+
+    Note: steps and guidance_scale are Optional because not all models support them.
+    Provider-hosted models (Midjourney, Ideogram, Imagen) don't support steps.
+    GenPlan determines which parameters are supported based on model config.
+    """
     width: int = 1024
     height: int = 1024
-    steps: int = 30
-    guidance_scale: float = 7.5
+    steps: Optional[int] = None  # Only for models that support it (e.g., FLUX, SD)
+    guidance_scale: Optional[float] = None  # Only for models that support cfg_scale
     seed: Optional[int] = None
     num_images: int = 1
     # Provider-specific settings (varies by model)
     provider_settings: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
+        """Convert to dictionary, omitting None values for optional params."""
         result = {
             "width": self.width,
             "height": self.height,
-            "steps": self.steps,
-            "guidance_scale": self.guidance_scale,
-            "seed": self.seed,
             "num_images": self.num_images,
         }
+        # Only include optional params if they have values
+        if self.steps is not None:
+            result["steps"] = self.steps
+        if self.guidance_scale is not None:
+            result["guidance_scale"] = self.guidance_scale
+        if self.seed is not None:
+            result["seed"] = self.seed
         if self.provider_settings:
             result["provider_settings"] = self.provider_settings
         return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GenerationParameters":
-        """Create from dictionary."""
+        """Create from dictionary, preserving None for unspecified optional params."""
         return cls(
             width=data.get("width", 1024),
             height=data.get("height", 1024),
-            steps=data.get("steps", 30),
-            guidance_scale=data.get("guidance_scale", 7.5),
+            steps=data.get("steps"),  # No default - respect what GenPlan decided
+            guidance_scale=data.get("guidance_scale"),  # No default
             seed=data.get("seed"),
             num_images=data.get("num_images", 1),
             provider_settings=data.get("provider_settings", {}),

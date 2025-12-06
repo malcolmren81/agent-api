@@ -795,15 +795,20 @@ class GenPlanAgent(BaseAgent):
                 job_id=state.job_id,
             )
 
-            # Store as nested structure for dual pipeline
-            state.model_input_params = {
+            # Store nested structure for AssemblyService (dual pipeline execution)
+            state.model_input_params_by_stage = {
                 "stage_1": stage_1_params["model_input_params"],
                 "stage_2": stage_2_params["model_input_params"],
             }
-            state.provider_params = {
+            state.provider_params_by_stage = {
                 "stage_1": stage_1_params["provider_params"],
                 "stage_2": stage_2_params["provider_params"],
             }
+
+            # Flatten to stage_1 params for downstream compatibility (ReactPrompt, Planner)
+            # These components expect flat structure
+            state.model_input_params = stage_1_params["model_input_params"]
+            state.provider_params = stage_1_params["provider_params"]
 
             logger.info(
                 "genplan.parameters.extracted",
@@ -813,6 +818,7 @@ class GenPlanAgent(BaseAgent):
                 stage_1_has_steps="steps" in stage_1_params["model_input_params"],
                 stage_2_model=state.model_specs.get("stage_2", {}).get("model"),
                 stage_2_has_steps="steps" in stage_2_params["model_input_params"],
+                flattened_to="stage_1",
             )
         else:
             # Single pipeline - extract params for stage_1 only

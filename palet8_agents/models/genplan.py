@@ -184,9 +184,16 @@ class GenerationPlan:
     model_alternatives: List[str] = field(default_factory=list)
     model_specs: Dict[str, Any] = field(default_factory=dict)
 
-    # Parameters
+    # Parameters (flat structure for downstream compatibility)
+    # For dual pipelines, these contain stage_1 params for backward compatibility
     model_input_params: Dict[str, Any] = field(default_factory=dict)
     provider_params: Dict[str, Any] = field(default_factory=dict)
+
+    # Stage-specific parameters (for dual pipelines)
+    # Structure: {"stage_1": {...}, "stage_2": {...}}
+    # AssemblyService uses these for dual pipeline execution
+    model_input_params_by_stage: Optional[Dict[str, Dict[str, Any]]] = None
+    provider_params_by_stage: Optional[Dict[str, Dict[str, Any]]] = None
 
     # Pipeline configuration
     pipeline: Optional[PipelineConfig] = None
@@ -204,7 +211,7 @@ class GenerationPlan:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result = {
             "job_id": self.job_id,
             "user_id": self.user_id,
             "complexity": self.complexity,
@@ -224,6 +231,12 @@ class GenerationPlan:
             "validation_errors": self.validation_errors,
             "metadata": self.metadata,
         }
+        # Include stage-specific params if present (dual pipelines)
+        if self.model_input_params_by_stage:
+            result["model_input_params_by_stage"] = self.model_input_params_by_stage
+        if self.provider_params_by_stage:
+            result["provider_params_by_stage"] = self.provider_params_by_stage
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GenerationPlan":
@@ -250,6 +263,8 @@ class GenerationPlan:
             model_specs=data.get("model_specs", {}),
             model_input_params=data.get("model_input_params", {}),
             provider_params=data.get("provider_params", {}),
+            model_input_params_by_stage=data.get("model_input_params_by_stage"),
+            provider_params_by_stage=data.get("provider_params_by_stage"),
             pipeline=pipeline,
             estimated_cost=data.get("estimated_cost"),
             estimated_latency_ms=data.get("estimated_latency_ms"),
@@ -308,8 +323,12 @@ class GenPlanState:
     model_specs: Dict[str, Any] = field(default_factory=dict)
 
     # Step 5: EXTRACT_PARAMETERS output
+    # Flat params for downstream compatibility (ReactPrompt, Planner)
     model_input_params: Dict[str, Any] = field(default_factory=dict)
     provider_params: Dict[str, Any] = field(default_factory=dict)
+    # Stage-specific params for dual pipelines (AssemblyService)
+    model_input_params_by_stage: Optional[Dict[str, Dict[str, Any]]] = None
+    provider_params_by_stage: Optional[Dict[str, Dict[str, Any]]] = None
     parameters_extracted: bool = False
 
     # Step 6: VALIDATE_PLAN output
@@ -342,6 +361,8 @@ class GenPlanState:
             model_specs=self.model_specs,
             model_input_params=self.model_input_params,
             provider_params=self.provider_params,
+            model_input_params_by_stage=self.model_input_params_by_stage,
+            provider_params_by_stage=self.provider_params_by_stage,
             pipeline=self.pipeline,
             estimated_cost=self.estimated_cost,
             estimated_latency_ms=self.estimated_latency_ms,

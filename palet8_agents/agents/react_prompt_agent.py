@@ -43,18 +43,29 @@ class ReactAction(Enum):
 
 @dataclass
 class ClarificationQuestion:
-    """Question to route through Pali to user."""
+    """Question to route through Pali to user.
+
+    Question types:
+    - "text": Free-form text input
+    - "selector": UI selector component (dropdown, grid, etc.)
+    - "image_upload": Image file upload
+
+    Frontend components use selector_id to determine which UI to show.
+    """
     question_type: str  # "text", "selector", "image_upload"
     field: str
     question_text: str
-    selector_id: Optional[str] = None
-    options: Optional[List[str]] = None
+    selector_id: Optional[str] = None  # Frontend component ID
+    component: Optional[str] = None  # Frontend component name (e.g., "StyleSelector")
+    options: Optional[List[str]] = None  # Options for selector
+    placeholder: Optional[str] = None  # Placeholder for text input
+    accept: Optional[str] = None  # File types for image upload (e.g., "image/*")
     required: bool = False
     priority: int = 0  # Lower = higher priority
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        result = {
             "question_type": self.question_type,
             "field": self.field,
             "question_text": self.question_text,
@@ -63,18 +74,65 @@ class ClarificationQuestion:
             "required": self.required,
             "priority": self.priority,
         }
+        # Include optional fields if present
+        if self.component:
+            result["component"] = self.component
+        if self.placeholder:
+            result["placeholder"] = self.placeholder
+        if self.accept:
+            result["accept"] = self.accept
+        return result
 
 
 # Field to selector mapping for clarification questions
+# Format: field -> (selector_id, question_type, component, placeholder/accept)
 FIELD_SELECTOR_MAP = {
-    "style": ("aesthetic_style", "selector"),
-    "product_type": ("product_category", "selector"),
-    "dimensions": ("aspect_ratio", "selector"),
-    "character": ("system_character", "selector"),
-    "reference_image": ("reference_image", "image_upload"),
-    "text_content": ("text_in_image", "text"),
-    "mood": (None, "text"),
-    "colors": (None, "text"),
+    # UI Selector components (template HTML selectors from customer app)
+    "style": {
+        "type": "selector",
+        "selector_id": "aesthetic_style",
+        "component": "StyleSelector",
+    },
+    "product_type": {
+        "type": "selector",
+        "selector_id": "product_category",
+        "component": "ProductCategoryGrid",
+    },
+    "dimensions": {
+        "type": "selector",
+        "selector_id": "aspect_ratio",
+        "component": "DimensionPicker",
+    },
+    "character": {
+        "type": "selector",
+        "selector_id": "system_character",
+        "component": "CharacterSelector",
+    },
+    # Text input fields
+    "mood": {
+        "type": "text",
+        "placeholder": "Describe the mood or atmosphere you want...",
+    },
+    "colors": {
+        "type": "text",
+        "placeholder": "What colors would you like? (e.g., 'warm tones', 'blue and gold')",
+    },
+    "subject": {
+        "type": "text",
+        "placeholder": "What is the main subject of your image?",
+    },
+    # Image upload
+    "reference_image": {
+        "type": "image_upload",
+        "selector_id": "reference_image",
+        "accept": "image/*",
+    },
+    # Text overlay content
+    "text_content": {
+        "type": "text",
+        "selector_id": "text_in_image",
+        "placeholder": "What text should appear in the image?",
+    },
 }
 
 
@@ -617,6 +675,13 @@ class ReactPromptAgent(BaseAgent):
         - selector: UI selector component (style, product_type, etc.)
         - text: Free-form text input
         - image_upload: Reference image upload
+
+        Each field maps to delivery method from FIELD_SELECTOR_MAP which includes:
+        - type: Question type
+        - selector_id: Frontend component ID
+        - component: Frontend component name
+        - placeholder: Text for text inputs
+        - accept: File types for image upload
         """
         logger.info(
             "react_prompt.questions.generate.start",
@@ -626,9 +691,15 @@ class ReactPromptAgent(BaseAgent):
 
         questions = []
 
-        for field in state.missing_fields:
-            selector_info = FIELD_SELECTOR_MAP.get(field, (None, "text"))
-            selector_id, question_type = selector_info
+        # Limit to 3 questions at a time to avoid overwhelming user
+        for field in state.missing_fields[:3]:
+            # Get delivery method from mapping (new dict format)
+            delivery = FIELD_SELECTOR_MAP.get(field, {"type": "text"})
+            question_type = delivery.get("type", "text")
+            selector_id = delivery.get("selector_id")
+            component = delivery.get("component")
+            placeholder = delivery.get("placeholder")
+            accept = delivery.get("accept")
 
             # Generate question text based on field
             question_text = self._get_question_text(field)
@@ -641,7 +712,10 @@ class ReactPromptAgent(BaseAgent):
                 field=field,
                 question_text=question_text,
                 selector_id=selector_id,
+                component=component,
                 options=options,
+                placeholder=placeholder,
+                accept=accept,
                 required=(field == "subject"),  # Only subject is truly required
                 priority=self.FIELD_PRIORITY.get(field, 99),
             )
