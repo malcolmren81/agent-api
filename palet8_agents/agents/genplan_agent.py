@@ -23,6 +23,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import yaml
+
 from src.utils.logger import get_logger
 
 from palet8_agents.core.agent import BaseAgent, AgentContext, AgentResult
@@ -39,6 +41,59 @@ from palet8_agents.services.genflow_service import GenflowService
 from palet8_agents.services.model_selection_service import ModelSelectionService
 
 logger = get_logger(__name__)
+
+# Path to image models config
+MODELS_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "image_models_config.yaml"
+
+# Cache for loaded config
+_models_config_cache: Optional[Dict[str, Any]] = None
+
+
+def _load_models_config() -> Dict[str, Any]:
+    """Load and cache the image models config."""
+    global _models_config_cache
+    if _models_config_cache is not None:
+        return _models_config_cache
+
+    try:
+        if MODELS_CONFIG_PATH.exists():
+            with open(MODELS_CONFIG_PATH, "r") as f:
+                _models_config_cache = yaml.safe_load(f)
+        else:
+            logger.warning(
+                "genplan.config.not_found",
+                path=str(MODELS_CONFIG_PATH),
+            )
+            _models_config_cache = {}
+    except Exception as e:
+        logger.error(
+            "genplan.config.load_error",
+            error_detail=str(e),
+        )
+        _models_config_cache = {}
+
+    return _models_config_cache
+
+
+def _get_model_specs_from_config(model_id: str) -> Dict[str, Any]:
+    """
+    Load model specs from image_models_config.yaml.
+
+    Returns the full model config including specs, provider_params, etc.
+    Returns empty dict if model not found.
+    """
+    config = _load_models_config()
+    model_registry = config.get("model_registry", {})
+
+    model_config = model_registry.get(model_id, {})
+    if not model_config:
+        logger.warning(
+            "genplan.model_config.not_found",
+            model_id=model_id,
+        )
+        return {}
+
+    return model_config
 
 
 class GenPlanAction(Enum):
@@ -79,6 +134,8 @@ COMPLEXITY_TRIGGERS = {
         "sketch", "concept", "test", "try",
     ],
 }
+
+
 
 
 # Load system prompt from file
@@ -552,6 +609,7 @@ class GenPlanAgent(BaseAgent):
         - Cost/quality tradeoffs
 
         ACT: Call ModelSelectionService or use pipeline predefined models
+        For each model selected, load actual specs from image_models_config.yaml
 
         OBSERVE: Set state.model_id, model_rationale, model_alternatives, model_specs
         """
@@ -563,24 +621,46 @@ class GenPlanAgent(BaseAgent):
             pipeline_config = genflow_service.get_dual_pipeline_config(state.genflow.flow_name)
 
             if pipeline_config and pipeline_config.get("stage_1_model"):
-                state.model_id = pipeline_config.get("stage_1_model")
+                stage_1_model = pipeline_config.get("stage_1_model")
+                stage_2_model = pipeline_config.get("stage_2_model")
+
+                # Load actual model specs from config for BOTH models
+                stage_1_config = _get_model_specs_from_config(stage_1_model)
+                stage_2_config = _get_model_specs_from_config(stage_2_model) if stage_2_model else {}
+
+                state.model_id = stage_1_model
                 state.model_rationale = f"Stage 1 model for {state.genflow.flow_name} pipeline"
                 state.model_alternatives = []  # Pipeline models are fixed
+
+                # Store structured specs for all models in the pipeline
                 state.model_specs = {
+                    "pipeline_type": "dual",
                     "pipeline_name": state.genflow.flow_name,
-                    "stage_1_model": pipeline_config.get("stage_1_model"),
-                    "stage_1_purpose": pipeline_config.get("stage_1_purpose"),
-                    "stage_2_model": pipeline_config.get("stage_2_model"),
-                    "stage_2_purpose": pipeline_config.get("stage_2_purpose"),
+                    "stage_1": {
+                        "model": stage_1_model,
+                        "purpose": pipeline_config.get("stage_1_purpose"),
+                        "specs": stage_1_config.get("specs", {}),
+                        "provider_params": stage_1_config.get("specs", {}).get("provider_params", {}),
+                        "air_id": stage_1_config.get("air_id"),
+                        "provider": stage_1_config.get("provider"),
+                    },
+                    "stage_2": {
+                        "model": stage_2_model,
+                        "purpose": pipeline_config.get("stage_2_purpose"),
+                        "specs": stage_2_config.get("specs", {}),
+                        "provider_params": stage_2_config.get("specs", {}).get("provider_params", {}),
+                        "air_id": stage_2_config.get("air_id"),
+                        "provider": stage_2_config.get("provider"),
+                    },
                 }
 
                 # Build pipeline config
                 state.pipeline = PipelineConfig(
                     pipeline_type="dual",
                     pipeline_name=state.genflow.flow_name,
-                    stage_1_model=pipeline_config.get("stage_1_model"),
+                    stage_1_model=stage_1_model,
                     stage_1_purpose=pipeline_config.get("stage_1_purpose"),
-                    stage_2_model=pipeline_config.get("stage_2_model"),
+                    stage_2_model=stage_2_model,
                     stage_2_purpose=pipeline_config.get("stage_2_purpose"),
                 )
 
@@ -590,6 +670,8 @@ class GenPlanAgent(BaseAgent):
                     model_id=state.model_id,
                     source="dual_pipeline",
                     pipeline=state.genflow.flow_name,
+                    stage_1_has_specs=bool(stage_1_config.get("specs")),
+                    stage_2_has_specs=bool(stage_2_config.get("specs")),
                 )
                 return state
 
@@ -610,15 +692,34 @@ class GenPlanAgent(BaseAgent):
             scenario = "art_with_reference" if has_reference else "art_no_reference"
 
         # Select model - service returns tuple: (model_id, rationale, alternatives, model_specs)
-        model_id, rationale, alternatives, model_specs = await model_service.select_model(
+        model_id, rationale, alternatives, service_model_specs = await model_service.select_model(
             mode=state.complexity or "STANDARD",
             requirements={**requirements, "scenario": scenario},
         )
 
+        # Also load specs from config to ensure we have the full picture
+        config_model_specs = _get_model_specs_from_config(model_id)
+
         state.model_id = model_id
         state.model_rationale = rationale
         state.model_alternatives = alternatives
-        state.model_specs = model_specs
+
+        # Merge service specs with config specs, preferring config for specs section
+        state.model_specs = {
+            "pipeline_type": "single",
+            "stage_1": {
+                "model": model_id,
+                "purpose": "Generate final image",
+                "specs": config_model_specs.get("specs", service_model_specs.get("specs", {})),
+                "provider_params": config_model_specs.get("specs", {}).get("provider_params", {}),
+                "air_id": config_model_specs.get("air_id") or service_model_specs.get("air_id"),
+                "provider": config_model_specs.get("provider") or service_model_specs.get("provider"),
+            },
+            # Legacy fields for backward compatibility
+            "air_id": config_model_specs.get("air_id") or service_model_specs.get("air_id"),
+            "provider": config_model_specs.get("provider") or service_model_specs.get("provider"),
+            "specs": config_model_specs.get("specs", service_model_specs.get("specs", {})),
+        }
 
         # Build single pipeline config
         state.pipeline = PipelineConfig(
@@ -635,6 +736,7 @@ class GenPlanAgent(BaseAgent):
             scenario=scenario,
             rationale=state.model_rationale,
             alternatives=state.model_alternatives,
+            has_specs=bool(state.model_specs.get("specs")),
         )
 
         return state
@@ -645,36 +747,207 @@ class GenPlanAgent(BaseAgent):
         requirements: Dict[str, Any],
     ) -> GenPlanState:
         """
-        Extract generation parameters for the selected model.
+        Extract generation parameters for all models in the pipeline.
 
-        THINK: Extract correct parameters for the selected model,
+        THINK: Extract correct parameters for each model in the pipeline,
         including both standard generation params and provider-specific.
+        Only add steps/cfg_scale if the model's config includes specs.steps.
 
-        ACT: Build model_input_params and provider_params
+        For dual pipelines, extract params for both stage_1 and stage_2 models.
+
+        ACT: Build model_input_params and provider_params for each stage
 
         OBSERVE: Set state.model_input_params, provider_params, parameters_extracted
         """
-        logger.info("genplan.parameters.start", job_id=state.job_id)
+        logger.info(
+            "genplan.parameters.start",
+            job_id=state.job_id,
+            model_id=state.model_id,
+            pipeline_type=state.model_specs.get("pipeline_type", "unknown"),
+        )
 
-        # Standard model input params
-        model_input_params = {}
-
-        # Dimensions based on product type
+        # Common dimensions based on product type
         product_type = state.user_info.product_type if state.user_info else "general"
         width, height = self._get_dimensions_for_product(product_type, requirements)
+
+        # Check pipeline type
+        is_dual = state.model_specs.get("pipeline_type") == "dual"
+
+        if is_dual:
+            # Extract parameters for each stage model
+            stage_1_params = self._extract_stage_params(
+                stage_specs=state.model_specs.get("stage_1", {}),
+                complexity=state.complexity,
+                width=width,
+                height=height,
+                requirements=requirements,
+                stage_name="stage_1",
+                job_id=state.job_id,
+            )
+
+            stage_2_params = self._extract_stage_params(
+                stage_specs=state.model_specs.get("stage_2", {}),
+                complexity=state.complexity,
+                width=width,
+                height=height,
+                requirements=requirements,
+                stage_name="stage_2",
+                job_id=state.job_id,
+            )
+
+            # Store as nested structure for dual pipeline
+            state.model_input_params = {
+                "stage_1": stage_1_params["model_input_params"],
+                "stage_2": stage_2_params["model_input_params"],
+            }
+            state.provider_params = {
+                "stage_1": stage_1_params["provider_params"],
+                "stage_2": stage_2_params["provider_params"],
+            }
+
+            logger.info(
+                "genplan.parameters.extracted",
+                job_id=state.job_id,
+                pipeline_type="dual",
+                stage_1_model=state.model_specs.get("stage_1", {}).get("model"),
+                stage_1_has_steps="steps" in stage_1_params["model_input_params"],
+                stage_2_model=state.model_specs.get("stage_2", {}).get("model"),
+                stage_2_has_steps="steps" in stage_2_params["model_input_params"],
+            )
+        else:
+            # Single pipeline - extract params for stage_1 only
+            stage_specs = state.model_specs.get("stage_1", {})
+            if not stage_specs:
+                # Legacy fallback - use top-level specs
+                stage_specs = {
+                    "specs": state.model_specs.get("specs", {}),
+                    "provider_params": state.model_specs.get("provider_params", {}),
+                    "model": state.model_id,
+                }
+
+            stage_params = self._extract_stage_params(
+                stage_specs=stage_specs,
+                complexity=state.complexity,
+                width=width,
+                height=height,
+                requirements=requirements,
+                stage_name="stage_1",
+                job_id=state.job_id,
+            )
+
+            # For single pipeline, store flat (not nested) for backward compatibility
+            state.model_input_params = stage_params["model_input_params"]
+            state.provider_params = stage_params["provider_params"]
+
+            logger.info(
+                "genplan.parameters.extracted",
+                job_id=state.job_id,
+                pipeline_type="single",
+                model_id=state.model_id,
+                has_steps="steps" in state.model_input_params,
+                steps=state.model_input_params.get("steps"),
+                has_cfg_scale="cfg_scale" in state.model_input_params,
+                cfg_scale=state.model_input_params.get("cfg_scale"),
+                provider_param_keys=list(state.provider_params.keys()) if state.provider_params else [],
+            )
+
+        state.parameters_extracted = True
+        return state
+
+    def _extract_stage_params(
+        self,
+        stage_specs: Dict[str, Any],
+        complexity: str,
+        width: int,
+        height: int,
+        requirements: Dict[str, Any],
+        stage_name: str,
+        job_id: str,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Extract parameters for a single stage model.
+
+        Args:
+            stage_specs: The stage config containing model, specs, provider_params
+            complexity: Complexity level (simple/standard/complex)
+            width: Image width
+            height: Image height
+            requirements: Original requirements
+            stage_name: Name of the stage (stage_1 or stage_2)
+            job_id: Job ID for logging
+
+        Returns:
+            Dict with model_input_params and provider_params
+        """
+        model_input_params = {}
+        provider_params = {}
+
+        model_id = stage_specs.get("model", "unknown")
+        specs = stage_specs.get("specs", {})
+
+        # Set dimensions
         model_input_params["width"] = width
         model_input_params["height"] = height
 
-        # Steps based on complexity
-        if state.complexity == "complex":
-            model_input_params["steps"] = 40
-            model_input_params["guidance_scale"] = 8.0
-        elif state.complexity == "standard":
-            model_input_params["steps"] = 30
-            model_input_params["guidance_scale"] = 7.5
-        else:  # simple
-            model_input_params["steps"] = 25
-            model_input_params["guidance_scale"] = 7.0
+        # Check if model supports steps parameter from config (specs.steps)
+        supports_steps = "steps" in specs
+        supports_cfg_scale = "cfg_scale" in specs
+
+        logger.info(
+            f"genplan.parameters.{stage_name}_capability",
+            job_id=job_id,
+            model_id=model_id,
+            supports_steps=supports_steps,
+            supports_cfg_scale=supports_cfg_scale,
+            specs_keys=list(specs.keys()) if specs else [],
+        )
+
+        # Only add steps for models that support them (from config)
+        if supports_steps:
+            steps_config = specs.get("steps", {})
+            max_steps = steps_config.get("max", 50) if isinstance(steps_config, dict) else 50
+
+            # Steps based on complexity - clamped to model's max
+            if complexity == "complex":
+                model_input_params["steps"] = min(40, max_steps)
+            elif complexity == "standard":
+                model_input_params["steps"] = min(30, max_steps)
+            else:  # simple
+                model_input_params["steps"] = min(25, max_steps)
+
+            logger.info(
+                f"genplan.parameters.{stage_name}_steps_added",
+                job_id=job_id,
+                model_id=model_id,
+                steps=model_input_params["steps"],
+                max_steps=max_steps,
+            )
+        else:
+            logger.info(
+                f"genplan.parameters.{stage_name}_steps_skipped",
+                job_id=job_id,
+                model_id=model_id,
+                reason="Model config does not include specs.steps",
+            )
+
+        # Only add cfg_scale for models that support it
+        if supports_cfg_scale:
+            cfg_config = specs.get("cfg_scale", {})
+            default_cfg = cfg_config.get("default", 7.5) if isinstance(cfg_config, dict) else 7.5
+
+            if complexity == "complex":
+                model_input_params["cfg_scale"] = 8.0
+            elif complexity == "standard":
+                model_input_params["cfg_scale"] = 7.5
+            else:  # simple
+                model_input_params["cfg_scale"] = default_cfg
+
+            logger.info(
+                f"genplan.parameters.{stage_name}_cfg_scale_added",
+                job_id=job_id,
+                model_id=model_id,
+                cfg_scale=model_input_params["cfg_scale"],
+            )
 
         # Number of images
         model_input_params["num_images"] = requirements.get("num_images", 1)
@@ -683,33 +956,25 @@ class GenPlanAgent(BaseAgent):
         if requirements.get("seed") is not None:
             model_input_params["seed"] = requirements["seed"]
 
-        # Provider-specific params (from model specs)
-        provider_params = {}
-        if state.model_specs:
-            # Apply complexity-specific defaults from model config
-            defaults_key = "complex_default" if state.complexity == "complex" else "default"
-            if defaults_key in state.model_specs:
-                provider_params.update(state.model_specs[defaults_key])
+        # Provider-specific params from stage config
+        provider_params_config = stage_specs.get("provider_params", {})
+        if isinstance(provider_params_config, dict):
+            for param_name, param_config in provider_params_config.items():
+                if isinstance(param_config, dict):
+                    # Check for complexity-specific default
+                    if complexity == "complex" and "complex_default" in param_config:
+                        provider_params[param_name] = param_config["complex_default"]
+                    elif "default" in param_config:
+                        provider_params[param_name] = param_config["default"]
 
         # Override with user-specified provider params
         if requirements.get("provider_params"):
             provider_params.update(requirements["provider_params"])
 
-        state.model_input_params = model_input_params
-        state.provider_params = provider_params
-        state.parameters_extracted = True
-
-        logger.info(
-            "genplan.parameters.extracted",
-            job_id=state.job_id,
-            width=width,
-            height=height,
-            steps=model_input_params["steps"],
-            guidance_scale=model_input_params["guidance_scale"],
-            has_provider_params=bool(provider_params),
-        )
-
-        return state
+        return {
+            "model_input_params": model_input_params,
+            "provider_params": provider_params,
+        }
 
     async def _validate_plan(
         self,

@@ -60,8 +60,11 @@ class ImageGenerationRequest:
     width: Optional[int] = None
     height: Optional[int] = None
     num_images: int = 1
-    steps: int = 30
-    guidance_scale: float = 7.5
+    # steps is optional - only set for models that support it (config specs.steps)
+    # Provider-hosted models (Midjourney, Ideogram, etc.) don't support steps
+    steps: Optional[int] = None
+    # guidance_scale/cfg_scale is optional - only set for models that support it
+    guidance_scale: Optional[float] = None
     seed: Optional[int] = None
     reference_image_url: Optional[str] = None
     reference_strength: float = 0.75
@@ -548,23 +551,28 @@ class ImageGenerationService:
             "numberResults": request.num_images,
         }
 
-        # Only add steps if the model supports it (e.g., flux-2-flex)
+        # Only add steps if the model supports it AND steps was provided
         # Provider-hosted models (Midjourney, Ideogram, Google) don't support steps
         supports_steps = self._supports_steps(model_name)
-        if supports_steps:
+        if supports_steps and request.steps is not None:
             payload["steps"] = request.steps
             logger.info(f"runware.payload.steps_added: model={model_name}, steps={request.steps}")
+        elif request.steps is not None:
+            # Steps provided but model doesn't support it - log and skip
+            logger.info(f"runware.payload.steps_skipped: model={model_name} steps={request.steps} (not supported)")
         else:
-            logger.info(f"runware.payload.steps_skipped: model={model_name} (not supported)")
+            logger.debug(f"runware.payload.steps_skipped: model={model_name} (not provided)")
 
-        # Only add CFGScale if the model supports it (e.g., flux-2-flex)
+        # Only add CFGScale if the model supports it AND cfg was provided
         # Provider-hosted models don't support CFGScale
         supports_cfg = self._supports_cfg_scale(model_name)
-        if supports_cfg:
+        if supports_cfg and request.guidance_scale is not None:
             payload["CFGScale"] = request.guidance_scale
             logger.info(f"runware.payload.cfg_added: model={model_name}, cfg={request.guidance_scale}")
+        elif request.guidance_scale is not None:
+            logger.debug(f"runware.payload.cfg_skipped: model={model_name} cfg={request.guidance_scale} (not supported)")
         else:
-            logger.debug(f"runware.payload.cfg_skipped: model={model_name} (not supported)")
+            logger.debug(f"runware.payload.cfg_skipped: model={model_name} (not provided)")
 
         if request.negative_prompt:
             payload["negativePrompt"] = request.negative_prompt
